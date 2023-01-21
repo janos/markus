@@ -28,7 +28,8 @@ func New[C comparable](path string) (*List[C], error) {
 	return l, nil
 }
 
-func (l *List[C]) Append(items ...C) error {
+func (l *List[C]) Append(items ...C) (int, error) {
+	var count int
 	for _, item := range items {
 		if _, ok := l.index[item]; ok {
 			continue
@@ -36,11 +37,12 @@ func (l *List[C]) Append(items ...C) error {
 		index := int64(len(l.elements))
 		l.elements = append(l.elements, item)
 		l.index[item] = index
+		count++
 	}
 	if err := l.write(); err != nil {
-		return fmt.Errorf("write list: %w", err)
+		return 0, fmt.Errorf("write list: %w", err)
 	}
-	return nil
+	return count, nil
 }
 
 func (l *List[C]) Elements() []C {

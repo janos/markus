@@ -48,15 +48,15 @@ func New[C comparable, VC VotingCounter](path string) (*Voting[C, VC], error) {
 	if err != nil {
 		return nil, fmt.Errorf("open strengths matrix: %w", err)
 	}
-	if preferences.Size() != strengths.Size() {
-		return nil, fmt.Errorf("preferences and strengths matrix dimensions do not match")
+	if ps, ss := preferences.Size(), strengths.Size(); ps != ss {
+		return nil, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", ps, ss)
 	}
 	choices, err := list.New[C](filepath.Join(path, "choices.list"))
 	if err != nil {
 		return nil, fmt.Errorf("open choices list: %w", err)
 	}
-	if int64(choices.Size()) != preferences.Size() {
-		return nil, fmt.Errorf("choices and preferences matrix dimensions do not match")
+	if cs, ps := int64(choices.Size()), preferences.Size(); cs != ps {
+		return nil, fmt.Errorf("choices dimension %v and preferences matrix dimension %v do not match", cs, ps)
 	}
 	dirtyChoices, err := set.New[int64](filepath.Join(path, "dirty-choices.set"))
 	if err != nil {
@@ -76,19 +76,19 @@ func (v *Voting[C, VC]) Add(choices ...C) error {
 	defer v.mu.Unlock()
 	defer v.strengthsMu.Unlock()
 
-	diff := len(choices)
-
-	if err := v.choices.Append(choices...); err != nil {
+	diff, err := v.choices.Append(choices...)
+	if err != nil {
 		return fmt.Errorf("append choices: %w", err)
 	}
+	if diff == 0 {
+		return nil
+	}
 
-	_, _, err := v.preferences.Resize(int64(diff))
-	if err != nil {
+	if _, _, err = v.preferences.Resize(int64(diff)); err != nil {
 		return fmt.Errorf("resize matrix for %d: %w", diff, err)
 	}
 
-	_, _, err = v.strengths.Resize(int64(diff))
-	if err != nil {
+	if _, _, err = v.strengths.Resize(int64(diff)); err != nil {
 		return fmt.Errorf("resize matrix for %d: %w", diff, err)
 	}
 

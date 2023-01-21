@@ -117,22 +117,21 @@ func TestVoting(t *testing.T) {
 				{Choice: "E", Index: 4, Wins: 0},
 			},
 		},
-		// TODO: fix duplicate choices handling
-		// {
-		// 	name:    "duplicate choice",
-		// 	choices: []string{"A", "B", "C", "B", "C", "C"},
-		// 	ballots: []ballot[string]{
-		// 		{ballot: markus.Ballot[string, uint64]{"A": 1, "B": 1}},
-		// 		{ballot: markus.Ballot[string, uint64]{"B": 1, "C": 1, "A": 2}},
-		// 		{ballot: markus.Ballot[string, uint64]{"A": 1, "B": 2, "C": 2}},
-		// 		{ballot: markus.Ballot[string, uint64]{"A": 1, "B": 200, "C": 10}},
-		// 	},
-		// 	result: []markus.Result[string]{
-		// 		{Choice: "A", Index: 0, Wins: 4},
-		// 		{Choice: "B", Index: 1, Wins: 2},
-		// 		{Choice: "C", Index: 2, Wins: 2},
-		// 	},
-		// },
+		{
+			name:    "duplicate choice",
+			choices: []string{"A", "B", "C", "B", "C", "C"},
+			ballots: []ballot[string]{
+				{ballot: markus.Ballot[string, uint64]{"A": 1, "C": 1}},
+				{ballot: markus.Ballot[string, uint64]{"B": 1, "C": 1, "A": 2}},
+				{ballot: markus.Ballot[string, uint64]{"B": 2, "C": 3}},
+			},
+			result: []markus.Result[string]{
+				{Choice: "B", Index: 1, Wins: 1},
+				{Choice: "C", Index: 2, Wins: 1},
+				{Choice: "A", Index: 0, Wins: 0},
+			},
+			tie: true,
+		},
 		{
 			name:    "example from wiki page",
 			choices: []string{"A", "B", "C", "D", "E"},
