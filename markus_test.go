@@ -6,9 +6,12 @@
 package markus_test
 
 import (
+	"fmt"
 	"math/rand"
 	"reflect"
+	"runtime"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -313,48 +316,6 @@ func TestVoting(t *testing.T) {
 	}
 }
 
-func BenchmarkVoting_Compute(b *testing.B) {
-	b.Log("creating voting...")
-	rand.Seed(time.Now().UnixNano())
-
-	const choicesCount = 1000
-
-	choices := newChoices(choicesCount)
-
-	dir := b.TempDir()
-	v, err := markus.New[string, uint64](dir)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer v.Close()
-
-	b.Log("adding choices...")
-	if err := v.Add(choices...); err != nil {
-		b.Fatal(err)
-	}
-
-	b.Log("voting...")
-	for i := 0; i < 5; i++ {
-		ballot := make(markus.Ballot[string, uint64])
-		ballot[choices[rand.Uint64()%choicesCount]] = 1
-		ballot[choices[rand.Uint64()%choicesCount]] = 1
-		ballot[choices[rand.Uint64()%choicesCount]] = 2
-		ballot[choices[rand.Uint64()%choicesCount]] = 3
-		ballot[choices[rand.Uint64()%choicesCount]] = 20
-		ballot[choices[rand.Uint64()%choicesCount]] = 20
-		if err := v.Vote(ballot); err != nil {
-			b.Fatal(err)
-		}
-	}
-
-	b.Log("starting benchmark...")
-	b.ResetTimer()
-
-	for n := 0; n < b.N; n++ {
-		_, _, _, _ = v.Compute()
-	}
-}
-
 func TestVoting_persistance(t *testing.T) {
 	dir := t.TempDir()
 	v, err := markus.New[string, uint64](dir)
@@ -416,11 +377,185 @@ func TestVoting_persistance(t *testing.T) {
 	assertEqual(t, "staled", staled, wantStaled)
 }
 
+func TestVoting_concurrency(t *testing.T) {
+	v, err := markus.New[string, uint64](t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+
+	rand.Seed(time.Now().UnixNano())
+
+	votingLog := make([]any, 0)
+	votingLogMu := new(sync.Mutex)
+
+	var (
+		concurrency   = runtime.NumCPU()*2 + 1
+		iterations    = 200
+		choicesCount  = 100
+		maxBallotSize = 5
+	)
+
+	t.Log("concurrency:", concurrency)
+
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i := 0; i < iterations; i++ {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			choices := make([]string, rand.Intn(rand.Intn(maxBallotSize-1)+1))
+
+			for i := range choices {
+				choices[i] = fmt.Sprintf("%d", rand.Intn(choicesCount))
+			}
+
+			func() {
+				votingLogMu.Lock()
+				defer votingLogMu.Unlock()
+
+				if err := v.Add(choices...); err != nil {
+					t.Error(err)
+				}
+
+				votingLog = append(votingLog, choices)
+			}()
+
+			ballot := make(markus.Ballot[string, uint64])
+			for _, c := range choices {
+				ballot[c] = rand.Uint64() % uint64(len(choices)+1)
+			}
+
+			func() {
+				votingLogMu.Lock()
+				defer votingLogMu.Unlock()
+				if err := v.Vote(ballot); err != nil {
+					t.Error(err)
+				}
+
+				votingLog = append(votingLog, ballot)
+			}()
+		}()
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			_, _, _, err := v.Compute()
+			if err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	gotResults, gotTie, gotStaled, err := v.Compute()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "staled", gotStaled, false)
+
+	validation, err := markus.New[string, uint64](t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+
+	for _, m := range votingLog {
+		switch m := m.(type) {
+		case []string:
+			if err := validation.Add(m...); err != nil {
+				t.Fatal(err)
+			}
+		case markus.Ballot[string, uint64]:
+			if err := validation.Vote(m); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Fatalf("unexpected type %T", m)
+		}
+	}
+
+	wantResults, wantTie, wantStaled, err := validation.Compute()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "staled", wantStaled, false)
+
+	assertResultsWins(t, gotResults, wantResults)
+	assertEqual(t, "tie", gotTie, wantTie)
+}
+
+func BenchmarkVoting_Compute(b *testing.B) {
+	b.Log("creating voting...")
+	rand.Seed(time.Now().UnixNano())
+
+	const choicesCount = 1000
+
+	choices := newChoices(choicesCount)
+
+	dir := b.TempDir()
+	v, err := markus.New[string, uint64](dir)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer v.Close()
+
+	b.Log("adding choices...")
+	if err := v.Add(choices...); err != nil {
+		b.Fatal(err)
+	}
+
+	b.Log("voting...")
+	for i := 0; i < 20; i++ {
+		ballot := make(markus.Ballot[string, uint64])
+		ballot[choices[rand.Uint64()%choicesCount]] = 1
+		ballot[choices[rand.Uint64()%choicesCount]] = 1
+		ballot[choices[rand.Uint64()%choicesCount]] = 2
+		ballot[choices[rand.Uint64()%choicesCount]] = 3
+		ballot[choices[rand.Uint64()%choicesCount]] = 20
+		ballot[choices[rand.Uint64()%choicesCount]] = 20
+		if err := v.Vote(ballot); err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	b.Log("starting benchmark...")
+	b.ResetTimer()
+
+	for n := 0; n < b.N; n++ {
+		_, _, _, _ = v.Compute()
+	}
+}
+
 func assertEqual[T any](t testing.TB, name string, got, want T) {
 	t.Helper()
 
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %s %+v, want %+v", name, got, want)
+	}
+}
+
+func assertResultsWins[C comparable](t testing.TB, got, want []markus.Result[C]) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d results, want %d", len(got), len(want))
+	}
+
+	for i, g := range got {
+		w := want[i]
+		if g.Choice != w.Choice {
+			t.Errorf("got result %d choice %v, want %v", i, g.Choice, w.Choice)
+		}
+		if g.Wins != w.Wins {
+			t.Errorf("got result %d wins %v, want %v", i, g.Wins, w.Wins)
+		}
 	}
 }
 

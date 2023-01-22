@@ -13,6 +13,8 @@ import (
 	"unsafe"
 )
 
+const versionSize = 8
+
 type Type interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
 }
@@ -70,6 +72,23 @@ func New[T Type](path string) (*Matrix[T], error) {
 	return m, nil
 }
 
+func (m *Matrix[T]) Version() int64 {
+	if len(*m.mmap) < versionSize {
+		return 0
+	}
+	return int64(binary.LittleEndian.Uint64((*m.mmap)[:versionSize]))
+}
+
+func (m *Matrix[T]) SetVersion(version int64) error {
+	if len(*m.mmap) < versionSize {
+		if _, _, err := m.Resize(0); err != nil {
+			return err
+		}
+	}
+	binary.LittleEndian.PutUint64((*m.mmap)[:versionSize], uint64(version))
+	return nil
+}
+
 func (m *Matrix[T]) Resize(diff int64) (from, to int64, err error) {
 	currentSize := m.Size()
 
@@ -93,7 +112,7 @@ func (m *Matrix[T]) Resize(diff int64) (from, to int64, err error) {
 		return 0, 0, fmt.Errorf("sync file: %w", err)
 	}
 
-	fileSize := newSize * newSize * m.elementSize
+	fileSize := versionSize + newSize*newSize*m.elementSize
 	if err := m.file.Truncate(fileSize); err != nil {
 		return 0, 0, fmt.Errorf("truncate file: %w", err)
 	}
@@ -108,27 +127,27 @@ func (m *Matrix[T]) Resize(diff int64) (from, to int64, err error) {
 
 func (m *Matrix[T]) Get(i, j int64) T {
 	l := location(i, j)
-	buf := (*m.mmap)[l*m.elementSize : (l+1)*m.elementSize]
+	buf := (*m.mmap)[versionSize+l*m.elementSize : versionSize+(l+1)*m.elementSize]
 	return m.decode(buf)
 }
 
 func (m *Matrix[T]) Set(i, j int64, e T) {
 	l := location(i, j)
 	buf := m.encode(e)
-	copy((*m.mmap)[l*m.elementSize:], buf)
+	copy((*m.mmap)[versionSize+l*m.elementSize:], buf)
 }
 
 func (m *Matrix[T]) Change(i, j int64, change func(T) T) {
 	l := location(i, j)
-	buf := (*m.mmap)[l*m.elementSize : (l+1)*m.elementSize]
+	buf := (*m.mmap)[versionSize+l*m.elementSize : versionSize+(l+1)*m.elementSize]
 	e := m.decode(buf)
 	buf = m.encode(change(e))
-	copy((*m.mmap)[l*m.elementSize:], buf)
+	copy((*m.mmap)[versionSize+l*m.elementSize:], buf)
 }
 
 func (m *Matrix[T]) Sync() error {
 	if err := m.mmap.Sync(); err != nil {
-		return fmt.Errorf("sync mmap: %w", err)
+		return fmt.Errorf("sync mmap size %d: %w", len(*m.mmap), err)
 	}
 	if err := m.file.Sync(); err != nil {
 		return fmt.Errorf("sync file: %w", err)
@@ -138,7 +157,7 @@ func (m *Matrix[T]) Sync() error {
 
 func (m *Matrix[T]) Size() int64 {
 	length := int64(len(*m.mmap))
-	return floorSqrt(length / m.elementSize)
+	return floorSqrt((length - versionSize) / m.elementSize)
 }
 
 func (m *Matrix[T]) Close() error {

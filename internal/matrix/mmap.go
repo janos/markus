@@ -44,6 +44,9 @@ func (m mmap) Unlock() error {
 }
 
 func (m mmap) Sync() error {
+	if len(m) == 0 {
+		return nil
+	}
 	return unix.Msync([]byte(m), unix.MS_SYNC)
 }
 

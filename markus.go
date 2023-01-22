@@ -15,7 +15,6 @@ import (
 	"resenje.org/markus/internal/bitset"
 	"resenje.org/markus/internal/list"
 	"resenje.org/markus/internal/matrix"
-	"resenje.org/markus/internal/set"
 )
 
 type VotingCounter interface {
@@ -23,13 +22,12 @@ type VotingCounter interface {
 }
 
 type Voting[C comparable, VC VotingCounter] struct {
-	preferences  *matrix.Matrix[VC]
-	strengths    *matrix.Matrix[VC]
-	strengthsMu  sync.RWMutex
-	choices      *list.List[C]
-	dirtyChoices *set.Set[int64]
-	mu           sync.RWMutex
-	closed       bool
+	preferences *matrix.Matrix[VC]
+	strengths   *matrix.Matrix[VC]
+	strengthsMu sync.RWMutex
+	choices     *list.List[C]
+	mu          sync.RWMutex
+	closed      bool
 }
 
 func New[C comparable, VC VotingCounter](path string) (*Voting[C, VC], error) {
@@ -58,15 +56,10 @@ func New[C comparable, VC VotingCounter](path string) (*Voting[C, VC], error) {
 	if cs, ps := int64(choices.Size()), preferences.Size(); cs != ps {
 		return nil, fmt.Errorf("choices dimension %v and preferences matrix dimension %v do not match", cs, ps)
 	}
-	dirtyChoices, err := set.New[int64](filepath.Join(path, "dirty-choices.set"))
-	if err != nil {
-		return nil, fmt.Errorf("open dirty choices set: %w", err)
-	}
 	return &Voting[C, VC]{
-		preferences:  preferences,
-		strengths:    strengths,
-		choices:      choices,
-		dirtyChoices: dirtyChoices,
+		preferences: preferences,
+		strengths:   strengths,
+		choices:     choices,
 	}, nil
 }
 
@@ -124,15 +117,21 @@ func (v *Voting[C, VC]) vote(b Ballot[C, VC], change func(VC) VC) error {
 		return fmt.Errorf("ballot ranks: %w", err)
 	}
 
+	var sum int64
 	for rank, choices1 := range ranks {
 		rest := ranks[rank+1:]
 		for _, i := range choices1 {
+			sum += i
 			for _, choices1 := range rest {
 				for _, j := range choices1 {
 					v.preferences.Set(i, j, change(v.preferences.Get(i, j)))
 				}
 			}
 		}
+	}
+
+	if err := v.preferences.SetVersion(v.preferences.Version() + sum); err != nil {
+		return fmt.Errorf("set preferences version: %w", err)
 	}
 
 	if err := v.preferences.Sync(); err != nil {
@@ -164,12 +163,6 @@ func (v *Voting[C, VC]) ballotRanks(b Ballot[C, VC]) (ranks [][]int64, err error
 		if hasUnrankedChoices {
 			rankedChoices.Set(index)
 		}
-
-		v.dirtyChoices.Add(index)
-	}
-
-	if err := v.dirtyChoices.Sync(); err != nil {
-		return nil, fmt.Errorf("sync dirty choices set: %w", err)
 	}
 
 	rankNumbers := make([]VC, 0, len(ballotRanks))
@@ -233,9 +226,6 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
 	if choicesCount == 0 {
 		return false, nil
 	}
-	if v.dirtyChoices.Size() == 0 {
-		return false, nil
-	}
 
 	if !v.strengthsMu.TryLock() {
 		// If the lock is already taken, it means that the strengths matrix is
@@ -245,68 +235,52 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
 	}
 	defer v.strengthsMu.Unlock()
 
-	dirtyChoices := v.dirtyChoices.Set()
+	preferencesVersion := v.preferences.Version()
+	if v.strengths.Version() == preferencesVersion {
+		return false, nil
+	}
 
 	for i := int64(0); i < choicesCount; i++ {
-		for j := range dirtyChoices {
+		for j := int64(0); j < choicesCount; j++ {
 			if i == j {
 				continue
 			}
-
-			// handle row
 			if c := v.preferences.Get(i, j); c > v.preferences.Get(j, i) {
 				v.strengths.Set(i, j, c)
 			} else {
 				v.strengths.Set(i, j, 0)
 			}
-
-			// handle column
-			if c := v.preferences.Get(j, i); c > v.preferences.Get(i, j) {
-				v.strengths.Set(j, i, c)
-			} else {
-				v.strengths.Set(j, i, 0)
-			}
 		}
 	}
 
 	for i := int64(0); i < choicesCount; i++ {
-		for j := range dirtyChoices {
+		for j := int64(0); j < choicesCount; j++ {
 			if i == j {
 				continue
 			}
 
-			for k := range dirtyChoices {
+			for k := int64(0); k < choicesCount; k++ {
 				if i == k || j == k {
 					continue
 				}
-
-				// handle row
-				v.strengths.Set(j, k, max(
+				m := max(
 					v.strengths.Get(j, k),
 					min(
 						v.strengths.Get(j, i),
 						v.strengths.Get(i, k),
 					),
-				))
-
-				// handle column
-				v.strengths.Set(i, k, max(
-					v.strengths.Get(i, k),
-					min(
-						v.strengths.Get(i, j),
-						v.strengths.Get(j, k),
-					),
-				))
+				)
+				v.strengths.Set(j, k, m)
 			}
 		}
 	}
 
-	if err := v.strengths.Sync(); err != nil {
-		return false, fmt.Errorf("sync strengths matrix: %w", err)
+	if err := v.strengths.SetVersion(preferencesVersion); err != nil {
+		return false, fmt.Errorf("set strengths matrix version: %w", err)
 	}
 
-	if err := v.dirtyChoices.Clear(); err != nil {
-		return false, fmt.Errorf("clear dirty choices set: %w", err)
+	if err := v.strengths.Sync(); err != nil {
+		return false, fmt.Errorf("sync strengths matrix: %w", err)
 	}
 
 	return false, nil
@@ -330,7 +304,6 @@ func (v *Voting[C, VC]) calculateResults() (results []Result[C], tie bool, err e
 			}
 		}
 		results = append(results, Result[C]{Choice: v.choices.Elements()[i], Index: i, Wins: count})
-
 	}
 
 	sort.Slice(results, func(i, j int) bool {
