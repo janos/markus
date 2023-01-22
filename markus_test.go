@@ -259,6 +259,21 @@ func TestVoting(t *testing.T) {
 				{Choice: "E", Index: 4, Wins: 0},
 			},
 		},
+		{
+			name:    "multiple unvote cancel compete vote",
+			choices: []string{"A", "B"},
+			ballots: []ballot[string]{
+				{ballot: markus.Ballot[string, uint64]{"A": 1}},
+				{ballot: markus.Ballot[string, uint64]{"A": 1}, unvote: true},
+				{ballot: markus.Ballot[string, uint64]{"B": 1, "A": 2}},
+				{ballot: markus.Ballot[string, uint64]{"B": 1, "A": 2}, unvote: true},
+				{ballot: markus.Ballot[string, uint64]{"B": 1}},
+			},
+			result: []markus.Result[string]{
+				{Choice: "B", Index: 1, Wins: 1},
+				{Choice: "A", Index: 0, Wins: 0},
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

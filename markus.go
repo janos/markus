@@ -245,31 +245,58 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
 	}
 	defer v.strengthsMu.Unlock()
 
+	dirtyChoices := v.dirtyChoices.Set()
+
 	for i := int64(0); i < choicesCount; i++ {
-		for j := int64(0); j < choicesCount; j++ {
-			// removed unnecessary check for optimization: if i == j { continue }
-			c := v.preferences.Get(i, j)
-			if c > v.preferences.Get(j, i) {
+		for j := range dirtyChoices {
+			if i == j {
+				continue
+			}
+
+			// handle row
+			if c := v.preferences.Get(i, j); c > v.preferences.Get(j, i) {
 				v.strengths.Set(i, j, c)
+			} else {
+				v.strengths.Set(i, j, 0)
+			}
+
+			// handle column
+			if c := v.preferences.Get(j, i); c > v.preferences.Get(i, j) {
+				v.strengths.Set(j, i, c)
+			} else {
+				v.strengths.Set(j, i, 0)
 			}
 		}
 	}
 
-	dirtyChoices := v.dirtyChoices.Set()
-
-	for i := range dirtyChoices {
+	for i := int64(0); i < choicesCount; i++ {
 		for j := range dirtyChoices {
-			// removed unnecessary check for optimization: if i == j { continue }
+			if i == j {
+				continue
+			}
+
 			for k := range dirtyChoices {
-				// removed unnecessary check for optimization: if i == k || j == k { continue }
-				e := max(
+				if i == k || j == k {
+					continue
+				}
+
+				// handle row
+				v.strengths.Set(j, k, max(
 					v.strengths.Get(j, k),
 					min(
 						v.strengths.Get(j, i),
 						v.strengths.Get(i, k),
 					),
-				)
-				v.strengths.Set(j, k, e)
+				))
+
+				// handle column
+				v.strengths.Set(i, k, max(
+					v.strengths.Get(i, k),
+					min(
+						v.strengths.Get(i, j),
+						v.strengths.Get(j, k),
+					),
+				))
 			}
 		}
 	}
