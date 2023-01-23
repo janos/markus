@@ -13,7 +13,10 @@ import (
 	"unsafe"
 )
 
-const versionSize = 8
+const (
+	versionSize    = 8
+	maxElementSize = 8
+)
 
 type Type interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
@@ -21,6 +24,7 @@ type Type interface {
 
 type Matrix[T Type] struct {
 	mmap        *mmap
+	dataPtr     unsafe.Pointer
 	file        *os.File
 	path        string
 	elementSize int64
@@ -49,21 +53,25 @@ func New[T Type](path string) (*Matrix[T], error) {
 		elementSize: elementSize,
 	}
 
+	if len(*mmap) != 0 {
+		m.dataPtr = unsafe.Add(unsafe.Pointer(&(*mmap)[0]), versionSize)
+	}
+
 	switch any(T(0)).(type) {
 	case uint8:
 		m.decode = func(data []byte) T { return (T)(data[0]) }
 		m.encode = func(v T) []byte { return []byte{byte(v)} }
 	case uint16:
 		m.decode = func(data []byte) T { return (T)(binary.LittleEndian.Uint16(data)) }
-		buf := make([]byte, elementSize) // protected by mu
+		buf := make([]byte, elementSize)
 		m.encode = func(v T) []byte { binary.LittleEndian.PutUint16(buf, uint16(v)); return buf }
 	case uint32:
 		m.decode = func(data []byte) T { return (T)(binary.LittleEndian.Uint32(data)) }
-		buf := make([]byte, elementSize) // protected by mu
+		buf := make([]byte, elementSize)
 		m.encode = func(v T) []byte { binary.LittleEndian.PutUint32(buf, uint32(v)); return buf }
 	case uint64:
 		m.decode = func(data []byte) T { return (T)(binary.LittleEndian.Uint64(data)) }
-		buf := make([]byte, elementSize) // protected by mu
+		buf := make([]byte, elementSize)
 		m.encode = func(v T) []byte { binary.LittleEndian.PutUint64(buf, uint64(v)); return buf }
 	default:
 		return nil, errors.New("unsupported type")
@@ -121,28 +129,27 @@ func (m *Matrix[T]) Resize(diff int64) (from, to int64, err error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("mmap file: %w", err)
 	}
+	m.dataPtr = unsafe.Add(unsafe.Pointer(&(*m.mmap)[0]), versionSize)
 
 	return currentSize, newSize, nil
 }
 
 func (m *Matrix[T]) Get(i, j int64) T {
+	if m.dataPtr == nil {
+		return T(0)
+	}
 	l := location(i, j)
-	buf := (*m.mmap)[versionSize+l*m.elementSize : versionSize+(l+1)*m.elementSize]
+	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
 	return m.decode(buf)
 }
 
 func (m *Matrix[T]) Set(i, j int64, e T) {
+	if m.dataPtr == nil {
+		return
+	}
 	l := location(i, j)
 	buf := m.encode(e)
-	copy((*m.mmap)[versionSize+l*m.elementSize:], buf)
-}
-
-func (m *Matrix[T]) Change(i, j int64, change func(T) T) {
-	l := location(i, j)
-	buf := (*m.mmap)[versionSize+l*m.elementSize : versionSize+(l+1)*m.elementSize]
-	e := m.decode(buf)
-	buf = m.encode(change(e))
-	copy((*m.mmap)[versionSize+l*m.elementSize:], buf)
+	copy((*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize], buf)
 }
 
 func (m *Matrix[T]) Sync() error {
