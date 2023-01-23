@@ -258,19 +258,22 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
 			if i == j {
 				continue
 			}
-
+			ji := v.strengths.Get(j, i)
 			for k := int64(0); k < choicesCount; k++ {
 				if i == k || j == k {
 					continue
 				}
+				jk := v.strengths.Get(j, k)
 				m := max(
-					v.strengths.Get(j, k),
+					jk,
 					min(
-						v.strengths.Get(j, i),
+						ji,
 						v.strengths.Get(i, k),
 					),
 				)
-				v.strengths.Set(j, k, m)
+				if m != jk {
+					v.strengths.Set(j, k, m)
+				}
 			}
 		}
 	}
