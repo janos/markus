@@ -6,6 +6,7 @@
 package markus
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -204,21 +205,57 @@ type Result[C comparable] struct {
 	Wins int
 }
 
-// Compute calculates a sorted list of choices with the total number of wins for
-// each of them. If there are multiple winners, tie boolean parameter is true.
-func (v *Voting[C, VC]) Compute() (results []Result[C], tie, stale bool, err error) {
-	stale, err = v.calculatePairwiseStrengths()
+// Compute calculates the results of the voting. The function passed as the
+// second argument is called for each choice with the Result value. If the function
+// returns true, the iteration is stopped. The order of the results is not
+// sorted by the number of wins.
+func (v *Voting[C, VC]) Compute(ctx context.Context, f func(Result[C]) (bool, error)) (stale bool, err error) {
+	stale, err = v.calculatePairwiseStrengths(ctx)
 	if err != nil {
-		return nil, false, false, fmt.Errorf("calculate pairwise strengths: %w", err)
+		return false, fmt.Errorf("calculate pairwise strengths: %w", err)
 	}
-	results, tie, err = v.calculateResults()
+	if err = v.calculateResults(ctx, f); err != nil {
+		return false, fmt.Errorf("calculate results: %w", err)
+	}
+	return stale, nil
+}
+
+// ComputeSorted calculates a sorted list of choices with the total number of wins for
+// each of them. If there are multiple winners, tie boolean parameter is true.
+func (v *Voting[C, VC]) ComputeSorted(ctx context.Context) (results []Result[C], tie, stale bool, err error) {
+	var choicesCount int64
+	func() {
+		v.mu.RLock()
+		defer v.mu.RUnlock()
+
+		choicesCount = int64(v.choices.Size())
+	}()
+
+	results = make([]Result[C], 0, choicesCount)
+
+	stale, err = v.Compute(ctx, func(r Result[C]) (bool, error) {
+		results = append(results, r)
+		return false, nil
+	})
 	if err != nil {
 		return nil, false, false, fmt.Errorf("calculate results: %w", err)
 	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Wins == results[j].Wins {
+			return results[i].Index < results[j].Index
+		}
+		return results[i].Wins > results[j].Wins
+	})
+
+	if len(results) >= 2 {
+		tie = results[0].Wins == results[1].Wins
+	}
+
 	return results, tie, stale, nil
 }
 
-func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
+func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (bool, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
@@ -240,7 +277,18 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
 		return false, nil
 	}
 
+	// Invalidate the strengths matrix version to ensure that it will be
+	// recalculated even if the iteration is interrupted by a context.
+	if err := v.strengths.SetVersion(0); err != nil {
+		return false, fmt.Errorf("invalidate strengths matrix version: %w", err)
+	}
+
 	for i := int64(0); i < choicesCount; i++ {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		default:
+		}
 		for j := int64(0); j < choicesCount; j++ {
 			if i == j {
 				continue
@@ -257,6 +305,11 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
 		for j := int64(0); j < choicesCount; j++ {
 			if i == j {
 				continue
+			}
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			default:
 			}
 			ji := v.strengths.Get(j, i)
 			for k := int64(0); k < choicesCount; k++ {
@@ -289,14 +342,19 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths() (bool, error) {
 	return false, nil
 }
 
-func (v *Voting[C, VC]) calculateResults() (results []Result[C], tie bool, err error) {
+func (v *Voting[C, VC]) calculateResults(ctx context.Context, f func(Result[C]) (bool, error)) error {
 	v.strengthsMu.RLock()
 	defer v.strengthsMu.RUnlock()
 
 	choicesCount := int64(v.choices.Size())
-	results = make([]Result[C], 0, choicesCount)
 
 	for i := int64(0); i < choicesCount; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		var count int
 
 		for j := int64(0); j < choicesCount; j++ {
@@ -306,21 +364,16 @@ func (v *Voting[C, VC]) calculateResults() (results []Result[C], tie bool, err e
 				}
 			}
 		}
-		results = append(results, Result[C]{Choice: v.choices.Elements()[i], Index: i, Wins: count})
-	}
-
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Wins == results[j].Wins {
-			return results[i].Index < results[j].Index
+		stop, err := f(Result[C]{Choice: v.choices.Elements()[i], Index: i, Wins: count})
+		if err != nil {
+			return fmt.Errorf("calculate results: %w", err)
 		}
-		return results[i].Wins > results[j].Wins
-	})
-
-	if len(results) >= 2 {
-		tie = results[0].Wins == results[1].Wins
+		if stop {
+			return nil
+		}
 	}
 
-	return results, tie, nil
+	return nil
 }
 
 func (v *Voting[C, VC]) Close() error {

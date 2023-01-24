@@ -6,6 +6,7 @@
 package markus_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -302,7 +303,7 @@ func TestVoting(t *testing.T) {
 				}
 			}
 
-			result, tie, _, err := v.Compute()
+			result, tie, _, err := v.ComputeSorted(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -341,7 +342,7 @@ func TestVoting_persistance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, tie, staled, err := v.Compute()
+	results, tie, staled, err := v.ComputeSorted(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +369,7 @@ func TestVoting_persistance(t *testing.T) {
 	}
 	defer v2.Close()
 
-	results, tie, staled, err = v2.Compute()
+	results, tie, staled, err = v2.ComputeSorted(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +446,7 @@ func TestVoting_concurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			_, _, _, err := v.Compute()
+			_, _, _, err := v.ComputeSorted(context.Background())
 			if err != nil {
 				t.Error(err)
 			}
@@ -454,7 +455,7 @@ func TestVoting_concurrency(t *testing.T) {
 
 	wg.Wait()
 
-	gotResults, gotTie, gotStaled, err := v.Compute()
+	gotResults, gotTie, gotStaled, err := v.ComputeSorted(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +482,7 @@ func TestVoting_concurrency(t *testing.T) {
 		}
 	}
 
-	wantResults, wantTie, wantStaled, err := validation.Compute()
+	wantResults, wantTie, wantStaled, err := validation.ComputeSorted(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +492,7 @@ func TestVoting_concurrency(t *testing.T) {
 	assertEqual(t, "tie", gotTie, wantTie)
 }
 
-func BenchmarkVoting_Compute(b *testing.B) {
+func BenchmarkVoting_ComputeSorted(b *testing.B) {
 	b.Log("creating voting...")
 	rand.Seed(time.Now().UnixNano())
 
@@ -529,7 +530,7 @@ func BenchmarkVoting_Compute(b *testing.B) {
 	b.ResetTimer()
 
 	for n := 0; n < b.N; n++ {
-		_, _, _, _ = v.Compute()
+		_, _, _, _ = v.ComputeSorted(context.Background())
 	}
 }
 
