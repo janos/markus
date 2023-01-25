@@ -339,6 +339,14 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (bool, e
 		return false, fmt.Errorf("sync strengths matrix: %w", err)
 	}
 
+	if v.preferences.Version() != preferencesVersion {
+		// If the preferences version has changed since the beginning of the
+		// calculation, it means that another goroutine has already started
+		// the calculation. In this case, signal that the calculation is
+		// stale.
+		return true, nil
+	}
+
 	return false, nil
 }
 
