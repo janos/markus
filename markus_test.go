@@ -392,34 +392,65 @@ func TestVoting_concurrency(t *testing.T) {
 
 	var (
 		concurrency   = runtime.NumCPU()*2 + 1
-		iterations    = 200
+		iterations    = 100
 		choicesCount  = 100
-		maxBallotSize = 5
+		maxBallotSize = 25
 	)
 
 	t.Log("concurrency:", concurrency)
 
+	addTimes := make([]time.Duration, 0)
+	addTimesMu := new(sync.Mutex)
+	voteTimes := make([]time.Duration, 0)
+	voteTimesMu := new(sync.Mutex)
+	computeTimes := make([]time.Duration, 0)
+	computeTimesMu := new(sync.Mutex)
+
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	for i := 0; i < iterations; i++ {
+		if i%(iterations/100) == 0 {
+			t.Logf("progress: %.0f %%", float64(i)/float64(iterations)*100)
+			addTimesMu.Lock()
+			t.Logf("add choices: %v per choice", avgDuration(addTimes))
+			addTimes = addTimes[:0]
+			addTimesMu.Unlock()
+
+			voteTimesMu.Lock()
+			t.Logf("vote: %v per choice", avgDuration(voteTimes))
+			voteTimes = voteTimes[:0]
+			voteTimesMu.Unlock()
+
+			computeTimesMu.Lock()
+			t.Logf("compute: %v per choice", avgDuration(computeTimes))
+			computeTimes = computeTimes[:0]
+			computeTimesMu.Unlock()
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			choices := make([]string, rand.Intn(rand.Intn(maxBallotSize-1)+1))
+			choices := make([]string, rand.Intn(rand.Intn(maxBallotSize)+1)+1)
 
 			for i := range choices {
 				choices[i] = fmt.Sprintf("%d", rand.Intn(choicesCount))
 			}
 
+			size := v.Size()
 			func() {
 				votingLogMu.Lock()
 				defer votingLogMu.Unlock()
 
+				start := time.Now()
 				if err := v.Add(choices...); err != nil {
 					t.Error(err)
+				}
+				if size > 0 {
+					addTimesMu.Lock()
+					addTimes = append(addTimes, time.Since(start)/time.Duration(size))
+					addTimesMu.Unlock()
 				}
 
 				votingLog = append(votingLog, choices)
@@ -433,8 +464,15 @@ func TestVoting_concurrency(t *testing.T) {
 			func() {
 				votingLogMu.Lock()
 				defer votingLogMu.Unlock()
+
+				start := time.Now()
 				if err := v.Vote(ballot); err != nil {
 					t.Error(err)
+				}
+				if size > 0 {
+					voteTimesMu.Lock()
+					voteTimes = append(voteTimes, time.Since(start)/time.Duration(size))
+					voteTimesMu.Unlock()
 				}
 
 				votingLog = append(votingLog, ballot)
@@ -446,10 +484,21 @@ func TestVoting_concurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			_, _, _, err := v.ComputeSorted(context.Background())
+
+			start := time.Now()
+			results, _, stale, err := v.ComputeSorted(context.Background())
 			if err != nil {
 				t.Error(err)
 			}
+			if len(results) == 0 {
+				return
+			}
+			if stale {
+				t.Log("stale")
+			}
+			computeTimesMu.Lock()
+			computeTimes = append(computeTimes, time.Since(start)/time.Duration(len(results)))
+			computeTimesMu.Unlock()
 		}()
 	}
 
@@ -566,4 +615,15 @@ func newChoices(count int) []string {
 		choices = append(choices, strconv.FormatInt(int64(i), 36))
 	}
 	return choices
+}
+
+func avgDuration(durations []time.Duration) time.Duration {
+	if len(durations) == 0 {
+		return 0
+	}
+	var sum time.Duration
+	for _, d := range durations {
+		sum += d
+	}
+	return sum / time.Duration(len(durations))
 }

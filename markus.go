@@ -25,10 +25,11 @@ type VotingCounter interface {
 type Voting[C comparable, VC VotingCounter] struct {
 	preferences *matrix.Matrix[VC]
 	strengths   *matrix.Matrix[VC]
-	strengthsMu sync.RWMutex
 	choices     *list.List[C]
-	mu          sync.RWMutex
 	closed      bool
+
+	mu          sync.RWMutex
+	strengthsMu sync.Mutex
 }
 
 func New[C comparable, VC VotingCounter](path string) (*Voting[C, VC], error) {
@@ -66,9 +67,7 @@ func New[C comparable, VC VotingCounter](path string) (*Voting[C, VC], error) {
 
 func (v *Voting[C, VC]) Add(choices ...C) error {
 	v.mu.Lock()
-	v.strengthsMu.Lock()
 	defer v.mu.Unlock()
-	defer v.strengthsMu.Unlock()
 
 	diff, err := v.choices.Append(choices...)
 	if err != nil {
@@ -118,11 +117,9 @@ func (v *Voting[C, VC]) vote(b Ballot[C, VC], change func(VC) VC) error {
 		return fmt.Errorf("ballot ranks: %w", err)
 	}
 
-	var sum int64
 	for rank, choices1 := range ranks {
 		rest := ranks[rank+1:]
 		for _, i := range choices1 {
-			sum += i
 			for _, choices1 := range rest {
 				for _, j := range choices1 {
 					v.preferences.Set(i, j, change(v.preferences.Get(i, j)))
@@ -131,7 +128,7 @@ func (v *Voting[C, VC]) vote(b Ballot[C, VC], change func(VC) VC) error {
 		}
 	}
 
-	if err := v.preferences.SetVersion(v.preferences.Version() + sum); err != nil {
+	if err := v.preferences.SetVersion(v.preferences.Version() + 1); err != nil {
 		return fmt.Errorf("set preferences version: %w", err)
 	}
 
@@ -205,35 +202,33 @@ type Result[C comparable] struct {
 	Wins int
 }
 
+func (v *Voting[C, VC]) Size() int {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	return v.choices.Size()
+}
+
 // Compute calculates the results of the voting. The function passed as the
 // second argument is called for each choice with the Result value. If the function
 // returns true, the iteration is stopped. The order of the results is not
 // sorted by the number of wins.
 func (v *Voting[C, VC]) Compute(ctx context.Context, f func(Result[C]) (bool, error)) (stale bool, err error) {
-	stale, err = v.calculatePairwiseStrengths(ctx)
-	if err != nil {
-		return false, fmt.Errorf("calculate pairwise strengths: %w", err)
-	}
-	if err = v.calculateResults(ctx, f); err != nil {
-		return false, fmt.Errorf("calculate results: %w", err)
-	}
-	return stale, nil
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	return v.compute(ctx, f)
 }
 
 // ComputeSorted calculates a sorted list of choices with the total number of wins for
 // each of them. If there are multiple winners, tie boolean parameter is true.
 func (v *Voting[C, VC]) ComputeSorted(ctx context.Context) (results []Result[C], tie, stale bool, err error) {
-	var choicesCount int64
-	func() {
-		v.mu.RLock()
-		defer v.mu.RUnlock()
+	v.mu.RLock()
+	defer v.mu.RUnlock()
 
-		choicesCount = int64(v.choices.Size())
-	}()
+	results = make([]Result[C], 0, v.choices.Size())
 
-	results = make([]Result[C], 0, choicesCount)
-
-	stale, err = v.Compute(ctx, func(r Result[C]) (bool, error) {
+	stale, err = v.compute(ctx, func(r Result[C]) (bool, error) {
 		results = append(results, r)
 		return false, nil
 	})
@@ -255,12 +250,25 @@ func (v *Voting[C, VC]) ComputeSorted(ctx context.Context) (results []Result[C],
 	return results, tie, stale, nil
 }
 
-func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (bool, error) {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
+func (v *Voting[C, VC]) compute(ctx context.Context, f func(Result[C]) (bool, error)) (stale bool, err error) {
+	stale, err = v.calculatePairwiseStrengths(ctx)
+	if err != nil {
+		return false, fmt.Errorf("calculate pairwise strengths: %w", err)
+	}
+	if err = v.calculateResults(ctx, f); err != nil {
+		return false, fmt.Errorf("calculate results: %w", err)
+	}
+	return stale, nil
+}
 
+func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (stale bool, err error) {
 	choicesCount := int64(v.choices.Size())
 	if choicesCount == 0 {
+		return false, nil
+	}
+
+	preferencesVersion := v.preferences.Version()
+	if v.strengths.Version() == preferencesVersion {
 		return false, nil
 	}
 
@@ -271,11 +279,6 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (bool, e
 		return true, nil
 	}
 	defer v.strengthsMu.Unlock()
-
-	preferencesVersion := v.preferences.Version()
-	if v.strengths.Version() == preferencesVersion {
-		return false, nil
-	}
 
 	// Invalidate the strengths matrix version to ensure that it will be
 	// recalculated even if the iteration is interrupted by a context.
@@ -339,21 +342,10 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (bool, e
 		return false, fmt.Errorf("sync strengths matrix: %w", err)
 	}
 
-	if v.preferences.Version() != preferencesVersion {
-		// If the preferences version has changed since the beginning of the
-		// calculation, it means that another goroutine has already started
-		// the calculation. In this case, signal that the calculation is
-		// stale.
-		return true, nil
-	}
-
 	return false, nil
 }
 
 func (v *Voting[C, VC]) calculateResults(ctx context.Context, f func(Result[C]) (bool, error)) error {
-	v.strengthsMu.RLock()
-	defer v.strengthsMu.RUnlock()
-
 	choicesCount := int64(v.choices.Size())
 
 	for i := int64(0); i < choicesCount; i++ {
