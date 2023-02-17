@@ -14,25 +14,24 @@ import (
 	"sync"
 
 	"resenje.org/markus/internal/bitset"
-	"resenje.org/markus/internal/list"
 	"resenje.org/markus/internal/matrix"
 )
 
-type VotingCounter interface {
+type Type interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
-type Voting[C comparable, VC VotingCounter] struct {
-	preferences *matrix.Matrix[VC]
-	strengths   *matrix.Matrix[VC]
-	choices     *list.List[C]
-	closed      bool
+type Voting[T Type] struct {
+	preferences  *matrix.Matrix[T]
+	strengths    *matrix.Matrix[T]
+	choicesCount uint64
+	closed       bool
 
 	mu          sync.RWMutex
 	strengthsMu sync.Mutex
 }
 
-func New[C comparable, VC VotingCounter](path string) (*Voting[C, VC], error) {
+func New[T Type](path string) (*Voting[T], error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.MkdirAll(path, 0777); err != nil {
 			return nil, fmt.Errorf("create directory: %w", err)
@@ -40,89 +39,146 @@ func New[C comparable, VC VotingCounter](path string) (*Voting[C, VC], error) {
 	} else if err != nil {
 		return nil, fmt.Errorf("stat directory: %w", err)
 	}
-	preferences, err := matrix.New[VC](filepath.Join(path, "preferences.matrix"))
+	preferences, err := matrix.New[T](filepath.Join(path, "preferences.matrix"))
 	if err != nil {
 		return nil, fmt.Errorf("open preferences matrix: %w", err)
 	}
-	strengths, err := matrix.New[VC](filepath.Join(path, "strengths.matrix"))
+	strengths, err := matrix.New[T](filepath.Join(path, "strengths.matrix"))
 	if err != nil {
 		return nil, fmt.Errorf("open strengths matrix: %w", err)
 	}
-	if ps, ss := preferences.Size(), strengths.Size(); ps != ss {
-		return nil, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", ps, ss)
+	size := preferences.Size()
+	if s := strengths.Size(); size != s {
+		return nil, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", size, s)
 	}
-	choices, err := list.New[C](filepath.Join(path, "choices.list"))
-	if err != nil {
-		return nil, fmt.Errorf("open choices list: %w", err)
-	}
-	if cs, ps := int64(choices.Size()), preferences.Size(); cs != ps {
-		return nil, fmt.Errorf("choices dimension %v and preferences matrix dimension %v do not match", cs, ps)
-	}
-	return &Voting[C, VC]{
-		preferences: preferences,
-		strengths:   strengths,
-		choices:     choices,
+	return &Voting[T]{
+		preferences:  preferences,
+		strengths:    strengths,
+		choicesCount: uint64(size),
 	}, nil
 }
 
-func (v *Voting[C, VC]) Add(choices ...C) error {
+func (v *Voting[T]) Add(count uint64) (from, to uint64, err error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	diff, err := v.choices.Append(choices...)
+	from, to, err = v.preferences.Resize(int64(count))
 	if err != nil {
-		return fmt.Errorf("append choices: %w", err)
-	}
-	if diff == 0 {
-		return nil
+		return 0, 0, fmt.Errorf("resize matrix for %d: %w", count, err)
 	}
 
-	if _, _, err = v.preferences.Resize(int64(diff)); err != nil {
-		return fmt.Errorf("resize matrix for %d: %w", diff, err)
+	strengthsFrom, strengthsTo, err := v.strengths.Resize(int64(count))
+	if err != nil {
+		return 0, 0, fmt.Errorf("resize matrix for %d: %w", count, err)
 	}
 
-	if _, _, err = v.strengths.Resize(int64(diff)); err != nil {
-		return fmt.Errorf("resize matrix for %d: %w", diff, err)
+	if from != strengthsFrom || to != strengthsTo {
+		return 0, 0, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", to-from, strengthsTo-strengthsFrom)
 	}
 
-	return nil
+	v.choicesCount = v.preferences.Size()
+
+	return from, to, nil
 }
 
 // Ballot represents a single vote with ranked choices. Lowest number represents
 // the highest rank. Not all choices have to be ranked and multiple choices can
 // have the same rank. Ranks do not have to be in consecutive order.
-type Ballot[C comparable, VC VotingCounter] map[C]VC
+type Ballot[T Type] map[uint64]T
+
+type Record struct {
+	Ranks [][]uint64
+	Size  uint64
+}
 
 // Vote updates the preferences passed as the first argument with the Ballot
 // values.
-func (v *Voting[C, VC]) Vote(b Ballot[C, VC]) error {
-	return v.vote(b, func(e VC) VC {
-		return e + 1
-	})
-}
-
-// Unvote removes the Ballot values from the preferences.
-func (v *Voting[C, VC]) Unvote(b Ballot[C, VC]) error {
-	return v.vote(b, func(e VC) VC {
-		return e - 1
-	})
-}
-
-func (v *Voting[C, VC]) vote(b Ballot[C, VC], change func(VC) VC) error {
+func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	ranks, err := v.ballotRanks(b)
-	if err != nil {
-		return fmt.Errorf("ballot ranks: %w", err)
+	choicesLen := v.choicesCount
+
+	ballotLen := uint64(len(b))
+
+	ballotRanks := make(map[T][]uint64, ballotLen)
+
+	for index, rank := range b {
+		if index >= choicesLen {
+			return Record{}, &UnknownChoiceError{Index: index}
+		}
+
+		ballotRanks[rank] = append(ballotRanks[rank], index)
+	}
+
+	rankNumbers := make([]T, 0, len(ballotRanks))
+	for rank := range ballotRanks {
+		rankNumbers = append(rankNumbers, rank)
+	}
+
+	sort.Slice(rankNumbers, func(i, j int) bool {
+		return rankNumbers[i] < rankNumbers[j]
+	})
+
+	hasUnrankedChoices := uint64(len(b)) != choicesLen
+
+	ranksLen := len(rankNumbers)
+	if hasUnrankedChoices {
+		ranksLen++
+	}
+
+	ranks := make([][]uint64, 0, ranksLen)
+	for _, rankNumber := range rankNumbers {
+		ranks = append(ranks, ballotRanks[rankNumber])
+	}
+
+	if hasUnrankedChoices {
+		ranks = append(ranks, unrankedChoices(choicesLen, ranks))
 	}
 
 	for rank, choices1 := range ranks {
 		rest := ranks[rank+1:]
-		for _, i := range choices1 {
-			for _, choices1 := range rest {
-				for _, j := range choices1 {
-					v.preferences.Set(i, j, change(v.preferences.Get(i, j)))
+		for _, index1 := range choices1 {
+			for _, choices2 := range rest {
+				for _, index2 := range choices2 {
+					v.preferences.Inc(index1, index2)
+				}
+			}
+		}
+	}
+
+	if err := v.preferences.SetVersion(v.preferences.Version() + 1); err != nil {
+		return Record{}, fmt.Errorf("set preferences version: %w", err)
+	}
+
+	if err := v.preferences.Sync(); err != nil {
+		return Record{}, fmt.Errorf("sync preferences matrix: %w", err)
+	}
+
+	return Record{
+		Ranks: ranks,
+		Size:  v.choicesCount,
+	}, nil
+}
+
+// Unvote removes the Ballot values from the preferences.
+func (v *Voting[T]) Unvote(r Record) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	ranks := r.Ranks
+
+	uc := unrankedChoices(r.Size, ranks)
+	if len(uc) > 0 {
+		ranks = append(ranks, uc)
+	}
+
+	for rank, choices1 := range ranks {
+		rest := ranks[rank+1:]
+		for _, index1 := range choices1 {
+			for _, choices2 := range rest {
+				for _, index2 := range choices2 {
+					v.preferences.Dec(index1, index2)
 				}
 			}
 		}
@@ -139,81 +195,41 @@ func (v *Voting[C, VC]) vote(b Ballot[C, VC], change func(VC) VC) error {
 	return nil
 }
 
-func (v *Voting[C, VC]) ballotRanks(b Ballot[C, VC]) (ranks [][]int64, err error) {
-	choicesLen := int64(v.choices.Size())
-	ballotLen := int64(len(b))
-	hasUnrankedChoices := ballotLen != choicesLen
-
-	ballotRanks := make(map[VC][]int64, ballotLen)
-	var rankedChoices bitset.BitSet[int64]
-	if hasUnrankedChoices {
-		rankedChoices = bitset.New(choicesLen)
-	}
-
-	for choice, rank := range b {
-		index, ok := v.choices.Index(choice)
-		if !ok {
-			return nil, &UnknownChoiceError[C]{Choice: choice}
-		}
-
-		ballotRanks[rank] = append(ballotRanks[rank], int64(index))
-
-		if hasUnrankedChoices {
-			rankedChoices.Set(index)
+func unrankedChoices(choicesLen uint64, ranks [][]uint64) (unranked []uint64) {
+	ranked := bitset.New(choicesLen)
+	for _, rank := range ranks {
+		for _, index := range rank {
+			ranked.Set(index)
 		}
 	}
 
-	rankNumbers := make([]VC, 0, len(ballotRanks))
-	for rank := range ballotRanks {
-		rankNumbers = append(rankNumbers, rank)
-	}
-
-	sort.Slice(rankNumbers, func(i, j int) bool {
-		return rankNumbers[i] < rankNumbers[j]
+	ranked.IterateUnset(func(i uint64) {
+		unranked = append(unranked, i)
 	})
 
-	ranks = make([][]int64, 0, len(rankNumbers))
-	for _, rankNumber := range rankNumbers {
-		ranks = append(ranks, ballotRanks[rankNumber])
-	}
-
-	if hasUnrankedChoices {
-		unranked := make([]int64, 0, choicesLen-ballotLen)
-		for i := int64(0); i < choicesLen; i++ {
-			if !rankedChoices.IsSet(i) {
-				unranked = append(unranked, i)
-			}
-		}
-		if len(unranked) > 0 {
-			ranks = append(ranks, unranked)
-		}
-	}
-
-	return ranks, nil
+	return unranked
 }
 
 // Result represents a total number of wins for a single choice.
-type Result[C comparable] struct {
-	// The choice value.
-	Choice C
+type Result struct {
 	// 0-based ordinal number of the choice in the choice slice.
-	Index int64
+	Index uint64
 	// Number of wins in pairwise comparisons to other choices votings.
 	Wins int
 }
 
-func (v *Voting[C, VC]) Size() int {
+func (v *Voting[T]) Size() uint64 {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	return v.choices.Size()
+	return v.choicesCount
 }
 
 // Compute calculates the results of the voting. The function passed as the
 // second argument is called for each choice with the Result value. If the function
 // returns true, the iteration is stopped. The order of the results is not
 // sorted by the number of wins.
-func (v *Voting[C, VC]) Compute(ctx context.Context, f func(Result[C]) (bool, error)) (stale bool, err error) {
+func (v *Voting[T]) Compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
@@ -222,13 +238,13 @@ func (v *Voting[C, VC]) Compute(ctx context.Context, f func(Result[C]) (bool, er
 
 // ComputeSorted calculates a sorted list of choices with the total number of wins for
 // each of them. If there are multiple winners, tie boolean parameter is true.
-func (v *Voting[C, VC]) ComputeSorted(ctx context.Context) (results []Result[C], tie, stale bool, err error) {
+func (v *Voting[T]) ComputeSorted(ctx context.Context) (results []Result, tie, stale bool, err error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	results = make([]Result[C], 0, v.choices.Size())
+	results = make([]Result, 0, v.choicesCount)
 
-	stale, err = v.compute(ctx, func(r Result[C]) (bool, error) {
+	stale, err = v.compute(ctx, func(r Result) (bool, error) {
 		results = append(results, r)
 		return false, nil
 	})
@@ -250,7 +266,7 @@ func (v *Voting[C, VC]) ComputeSorted(ctx context.Context) (results []Result[C],
 	return results, tie, stale, nil
 }
 
-func (v *Voting[C, VC]) compute(ctx context.Context, f func(Result[C]) (bool, error)) (stale bool, err error) {
+func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
 	stale, err = v.calculatePairwiseStrengths(ctx)
 	if err != nil {
 		return false, fmt.Errorf("calculate pairwise strengths: %w", err)
@@ -261,8 +277,8 @@ func (v *Voting[C, VC]) compute(ctx context.Context, f func(Result[C]) (bool, er
 	return stale, nil
 }
 
-func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (stale bool, err error) {
-	choicesCount := int64(v.choices.Size())
+func (v *Voting[T]) calculatePairwiseStrengths(ctx context.Context) (stale bool, err error) {
+	choicesCount := v.choicesCount
 	if choicesCount == 0 {
 		return false, nil
 	}
@@ -286,13 +302,13 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (stale b
 		return false, fmt.Errorf("invalidate strengths matrix version: %w", err)
 	}
 
-	for i := int64(0); i < choicesCount; i++ {
+	for i := uint64(0); i < choicesCount; i++ {
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
 		default:
 		}
-		for j := int64(0); j < choicesCount; j++ {
+		for j := uint64(0); j < choicesCount; j++ {
 			if i == j {
 				continue
 			}
@@ -304,8 +320,8 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (stale b
 		}
 	}
 
-	for i := int64(0); i < choicesCount; i++ {
-		for j := int64(0); j < choicesCount; j++ {
+	for i := uint64(0); i < choicesCount; i++ {
+		for j := uint64(0); j < choicesCount; j++ {
 			if i == j {
 				continue
 			}
@@ -315,7 +331,7 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (stale b
 			default:
 			}
 			ji := v.strengths.Get(j, i)
-			for k := int64(0); k < choicesCount; k++ {
+			for k := uint64(0); k < choicesCount; k++ {
 				if i == k || j == k {
 					continue
 				}
@@ -345,10 +361,10 @@ func (v *Voting[C, VC]) calculatePairwiseStrengths(ctx context.Context) (stale b
 	return false, nil
 }
 
-func (v *Voting[C, VC]) calculateResults(ctx context.Context, f func(Result[C]) (bool, error)) error {
-	choicesCount := int64(v.choices.Size())
+func (v *Voting[T]) calculateResults(ctx context.Context, f func(Result) (bool, error)) error {
+	choicesCount := v.choicesCount
 
-	for i := int64(0); i < choicesCount; i++ {
+	for i := uint64(0); i < choicesCount; i++ {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -357,14 +373,14 @@ func (v *Voting[C, VC]) calculateResults(ctx context.Context, f func(Result[C]) 
 
 		var count int
 
-		for j := int64(0); j < choicesCount; j++ {
+		for j := uint64(0); j < choicesCount; j++ {
 			if i != j {
 				if v.strengths.Get(i, j) > v.strengths.Get(j, i) {
 					count++
 				}
 			}
 		}
-		stop, err := f(Result[C]{Choice: v.choices.Elements()[i], Index: i, Wins: count})
+		stop, err := f(Result{Index: i, Wins: count})
 		if err != nil {
 			return fmt.Errorf("calculate results: %w", err)
 		}
@@ -376,7 +392,7 @@ func (v *Voting[C, VC]) calculateResults(ctx context.Context, f func(Result[C]) 
 	return nil
 }
 
-func (v *Voting[C, VC]) Close() error {
+func (v *Voting[T]) Close() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -396,14 +412,14 @@ func (v *Voting[C, VC]) Close() error {
 	return nil
 }
 
-func min[VC VotingCounter](a, b VC) VC {
+func min[T Type](a, b T) T {
 	if a < b {
 		return a
 	}
 	return b
 }
 
-func max[VC VotingCounter](a, b VC) VC {
+func max[T Type](a, b T) T {
 	if a > b {
 		return a
 	}

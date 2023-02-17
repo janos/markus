@@ -11,6 +11,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// todo: add support for windows
+
 type mmap []byte
 
 func newMmap(f *os.File) (*mmap, error) {

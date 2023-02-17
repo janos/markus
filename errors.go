@@ -7,10 +7,10 @@ package markus
 
 import "fmt"
 
-type UnknownChoiceError[C comparable] struct {
-	Choice C
+type UnknownChoiceError struct {
+	Index uint64
 }
 
-func (e *UnknownChoiceError[C]) Error() string {
-	return fmt.Sprintf("schulze: unknown choice %v", e.Choice)
+func (e *UnknownChoiceError) Error() string {
+	return fmt.Sprintf("markus: unknown choice %v", e.Index)
 }

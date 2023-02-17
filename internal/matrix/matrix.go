@@ -27,7 +27,7 @@ type Matrix[T Type] struct {
 	dataPtr     unsafe.Pointer
 	file        *os.File
 	path        string
-	elementSize int64
+	elementSize uint64
 
 	decode func([]byte) T
 	encode func(T) []byte
@@ -44,7 +44,7 @@ func New[T Type](path string) (*Matrix[T], error) {
 		return nil, fmt.Errorf("mmap file: %w", err)
 	}
 
-	elementSize := int64(unsafe.Sizeof(T(0)))
+	elementSize := uint64(unsafe.Sizeof(T(0)))
 
 	m := &Matrix[T]{
 		mmap:        mmap,
@@ -97,14 +97,17 @@ func (m *Matrix[T]) SetVersion(version int64) error {
 	return nil
 }
 
-func (m *Matrix[T]) Resize(diff int64) (from, to int64, err error) {
+func (m *Matrix[T]) Resize(diff int64) (from, to uint64, err error) {
 	currentSize := m.Size()
 
-	newSize := currentSize + diff
-
-	if newSize < 0 {
-		return 0, 0, fmt.Errorf("new size is negative %d (from %d)", newSize, currentSize)
+	var newSize uint64
+	if diff > 0 {
+		newSize = currentSize + uint64(diff)
+	} else {
+		newSize = currentSize - uint64(-diff)
 	}
+
+	// todo: detect overflow
 
 	if currentSize > 0 {
 		if err := m.mmap.Sync(); err != nil {
@@ -120,7 +123,7 @@ func (m *Matrix[T]) Resize(diff int64) (from, to int64, err error) {
 		return 0, 0, fmt.Errorf("sync file: %w", err)
 	}
 
-	fileSize := versionSize + newSize*newSize*m.elementSize
+	fileSize := int64(versionSize + newSize*newSize*m.elementSize)
 	if err := m.file.Truncate(fileSize); err != nil {
 		return 0, 0, fmt.Errorf("truncate file: %w", err)
 	}
@@ -134,7 +137,7 @@ func (m *Matrix[T]) Resize(diff int64) (from, to int64, err error) {
 	return currentSize, newSize, nil
 }
 
-func (m *Matrix[T]) Get(i, j int64) T {
+func (m *Matrix[T]) Get(i, j uint64) T {
 	if m.dataPtr == nil {
 		return T(0)
 	}
@@ -143,13 +146,31 @@ func (m *Matrix[T]) Get(i, j int64) T {
 	return m.decode(buf)
 }
 
-func (m *Matrix[T]) Set(i, j int64, e T) {
+func (m *Matrix[T]) Set(i, j uint64, e T) {
 	if m.dataPtr == nil {
 		return
 	}
 	l := location(i, j)
 	buf := m.encode(e)
 	copy((*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize], buf)
+}
+
+func (m *Matrix[T]) Inc(i, j uint64) {
+	if m.dataPtr == nil {
+		return
+	}
+	l := location(i, j)
+	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
+	incrementLittleEndian(buf)
+}
+
+func (m *Matrix[T]) Dec(i, j uint64) {
+	if m.dataPtr == nil {
+		return
+	}
+	l := location(i, j)
+	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
+	decrementLittleEndian(buf)
 }
 
 func (m *Matrix[T]) Sync() error {
@@ -162,8 +183,11 @@ func (m *Matrix[T]) Sync() error {
 	return nil
 }
 
-func (m *Matrix[T]) Size() int64 {
-	length := int64(len(*m.mmap))
+func (m *Matrix[T]) Size() uint64 {
+	length := uint64(len(*m.mmap))
+	if length < versionSize {
+		return 0
+	}
 	return floorSqrt((length - versionSize) / m.elementSize)
 }
 
@@ -179,20 +203,20 @@ func (m *Matrix[T]) Close() error {
 
 // matrix i,j = 0,0 0,1 1,0 1,1 0,2 1,2 2,0 2,1 2,2 0,3 1,3 2,3 3,0 3,1 3,2 3,3
 // array  n   =   0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
-func location(i, j int64) int64 {
+func location(i, j uint64) uint64 {
 	if i < j {
 		return j*j + i
 	}
 	return i*i + i + j
 }
 
-func floorSqrt(x int64) int64 {
+func floorSqrt(x uint64) uint64 {
 	if x == 0 || x == 1 {
 		return x
 	}
-	var start int64 = 1
+	var start uint64 = 1
 	end := x / 2
-	var ans int64
+	var ans uint64
 	for start <= end {
 		mid := (start + end) / 2
 		if mid*mid == x {
@@ -206,4 +230,32 @@ func floorSqrt(x int64) int64 {
 		}
 	}
 	return ans
+}
+
+func incrementLittleEndian(input []uint8) {
+	// Increment the least significant byte by 1
+	input[0]++
+
+	// Propagate any carries to more significant bytes
+	for i, last := 0, len(input)-1; i < last; i++ {
+		if input[i] == 0 {
+			input[i+1]++
+		} else {
+			break
+		}
+	}
+}
+
+func decrementLittleEndian(input []uint8) {
+	// Decrement the least significant byte by 1
+	input[0]--
+
+	// Propagate any borrows to more significant bytes
+	for i, last := 0, len(input)-1; i < last; i++ {
+		if input[i] == 0xFF {
+			input[i+1]--
+		} else {
+			break
+		}
+	}
 }
