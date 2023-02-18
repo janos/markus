@@ -78,11 +78,10 @@ func main() {
 	if err := v.Unvote(record1); err != nil {
 		log.Fatal(err)
 	}
-	record1, err = v.Vote(markus.Ballot[uint64]{
+	if _, err := v.Vote(markus.Ballot[uint64]{
 		0: 1,
 		1: 2,
-	})
-	if err != nil {
+	}); err != nil {
 		log.Fatal(err)
 	}
 
