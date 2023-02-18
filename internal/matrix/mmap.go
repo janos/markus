@@ -3,17 +3,20 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build !windows
+
 package matrix
 
 import (
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
-// todo: add support for windows
-
 type mmap []byte
+
+var _ = maxMapSize // avoid unused warning, used in mmap_windows.go
 
 func newMmap(f *os.File) (*mmap, error) {
 	fi, err := f.Stat()
@@ -33,29 +36,29 @@ func newMmap(f *os.File) (*mmap, error) {
 	}
 
 	m := mmap(data)
-
 	return &m, nil
 }
 
-func (m mmap) Lock() error {
-	return unix.Mlock([]byte(m))
-}
-
-func (m mmap) Unlock() error {
-	return unix.Munlock([]byte(m))
-}
-
-func (m mmap) Sync() error {
-	if len(m) == 0 {
+func (m *mmap) sync() error {
+	if len(*m) == 0 {
 		return nil
 	}
-	return unix.Msync([]byte(m), unix.MS_SYNC)
+	return unix.Msync(*m, unix.MS_SYNC)
 }
 
-func (m mmap) Unmap() error {
-	data := []byte(m)
-	if len(data) == 0 {
+func (m *mmap) unmap() error {
+	if len(*m) == 0 {
 		return nil
 	}
-	return unix.Munmap(data)
+	err := unix.Munmap(*m)
+	*m = nil
+	return err
+}
+
+func flock(f *os.File) error {
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_NB|syscall.LOCK_EX)
+}
+
+func funlock(f *os.File) error {
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }

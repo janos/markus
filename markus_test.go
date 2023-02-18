@@ -563,11 +563,7 @@ func TestVoting_concurrency(t *testing.T) {
 	}
 	assertEqual(t, "staled", gotStaled, false)
 
-	validation, err := markus.New[uint64](t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer v.Close()
+	validation := newMarkusVoting[uint64](t)
 
 	for _, m := range votingLog {
 		switch m := m.(type) {

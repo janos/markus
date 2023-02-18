@@ -39,6 +39,11 @@ func New[T Type](path string) (*Matrix[T], error) {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
 
+	if err := flock(f); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("lock file: %w", err)
+	}
+
 	mmap, err := newMmap(f)
 	if err != nil {
 		return nil, fmt.Errorf("mmap file: %w", err)
@@ -110,12 +115,12 @@ func (m *Matrix[T]) Resize(diff int64) (from, to uint64, err error) {
 	// todo: detect overflow
 
 	if currentSize > 0 {
-		if err := m.mmap.Sync(); err != nil {
+		if err := m.mmap.sync(); err != nil {
 			return 0, 0, fmt.Errorf("sync mmap: %w", err)
 		}
 	}
 
-	if err := m.mmap.Unmap(); err != nil {
+	if err := m.mmap.unmap(); err != nil {
 		return 0, 0, fmt.Errorf("unmap file: %w", err)
 	}
 
@@ -130,8 +135,10 @@ func (m *Matrix[T]) Resize(diff int64) (from, to uint64, err error) {
 
 	m.mmap, err = newMmap(m.file)
 	if err != nil {
+		_ = m.file.Close()
 		return 0, 0, fmt.Errorf("mmap file: %w", err)
 	}
+
 	m.dataPtr = unsafe.Add(unsafe.Pointer(&(*m.mmap)[0]), versionSize)
 
 	return currentSize, newSize, nil
@@ -174,7 +181,7 @@ func (m *Matrix[T]) Dec(i, j uint64) {
 }
 
 func (m *Matrix[T]) Sync() error {
-	if err := m.mmap.Sync(); err != nil {
+	if err := m.mmap.sync(); err != nil {
 		return fmt.Errorf("sync mmap size %d: %w", len(*m.mmap), err)
 	}
 	if err := m.file.Sync(); err != nil {
@@ -192,8 +199,11 @@ func (m *Matrix[T]) Size() uint64 {
 }
 
 func (m *Matrix[T]) Close() error {
-	if err := m.mmap.Unmap(); err != nil {
+	if err := m.mmap.unmap(); err != nil {
 		return fmt.Errorf("unmap: %w", err)
+	}
+	if err := funlock(m.file); err != nil {
+		return fmt.Errorf("unlock file: %w", err)
 	}
 	if err := m.file.Close(); err != nil {
 		return fmt.Errorf("close file: %w", err)

@@ -10,7 +10,7 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
-          # - windows-latest # todo: enable with mmap windows support
+          - windows-latest
 
     steps:
 
