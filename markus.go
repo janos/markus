@@ -21,6 +21,8 @@ type Type interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
+// Voting holds number of votes for every pair of choices. Methods on the Voting
+// type are safe for concurrent calls.
 type Voting[T Type] struct {
 	preferences  *matrix.Matrix[T]
 	strengths    *matrix.Matrix[T]
@@ -31,7 +33,9 @@ type Voting[T Type] struct {
 	strengthsMu sync.Mutex
 }
 
-func New[T Type](path string) (*Voting[T], error) {
+// NewVoting initializes a new voting with state stored in the provided
+// directory.
+func NewVoting[T Type](path string) (*Voting[T], error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.MkdirAll(path, 0777); err != nil {
 			return nil, fmt.Errorf("create directory: %w", err)
@@ -58,7 +62,9 @@ func New[T Type](path string) (*Voting[T], error) {
 	}, nil
 }
 
-func (v *Voting[T]) Add(count uint64) (from, to uint64, err error) {
+// AddChoices adds new choices to the voting. It returns the index of the first
+// new choice and the index of the last new choice.
+func (v *Voting[T]) AddChoices(count uint64) (from, to uint64, err error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -86,13 +92,18 @@ func (v *Voting[T]) Add(count uint64) (from, to uint64, err error) {
 // have the same rank. Ranks do not have to be in consecutive order.
 type Ballot[T Type] map[uint64]T
 
+// Record represents a single vote with ranked choices. Ranks field is a list of
+// Ballot values. The first ballot is the list with the first choices, the
+// second ballot is the list with the second choices, and so on. Size field
+// represents the number of choices at the time of the vote. Record is returned
+// by the Vote method and can be used to undo the vote.
 type Record struct {
 	Ranks [][]uint64
 	Size  uint64
 }
 
-// Vote updates the preferences passed as the first argument with the Ballot
-// values.
+// Vote adds a voting preferences by a single voting ballot. A record of a
+// complete and normalized preferences is returned that can be used to unvote.
 func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -161,7 +172,7 @@ func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 	}, nil
 }
 
-// Unvote removes the Ballot values from the preferences.
+// Unvote removes the vote from the preferences.
 func (v *Voting[T]) Unvote(r Record) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -218,6 +229,7 @@ type Result struct {
 	Wins int
 }
 
+// Size returns the number of choices in the voting.
 func (v *Voting[T]) Size() uint64 {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
@@ -227,7 +239,7 @@ func (v *Voting[T]) Size() uint64 {
 
 // Compute calculates the results of the voting. The function passed as the
 // second argument is called for each choice with the Result value. If the function
-// returns true, the iteration is stopped. The order of the results is not
+// returns false, the iteration is stopped. The order of the results is not
 // sorted by the number of wins.
 func (v *Voting[T]) Compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
 	v.mu.RLock()
@@ -246,7 +258,7 @@ func (v *Voting[T]) ComputeSorted(ctx context.Context) (results []Result, tie, s
 
 	stale, err = v.compute(ctx, func(r Result) (bool, error) {
 		results = append(results, r)
-		return false, nil
+		return true, nil
 	})
 	if err != nil {
 		return nil, false, false, fmt.Errorf("calculate results: %w", err)
@@ -380,11 +392,11 @@ func (v *Voting[T]) calculateResults(ctx context.Context, f func(Result) (bool, 
 				}
 			}
 		}
-		stop, err := f(Result{Index: i, Wins: count})
+		cont, err := f(Result{Index: i, Wins: count})
 		if err != nil {
 			return fmt.Errorf("calculate results: %w", err)
 		}
-		if stop {
+		if !cont {
 			return nil
 		}
 	}
@@ -392,6 +404,7 @@ func (v *Voting[T]) calculateResults(ctx context.Context, f func(Result) (bool, 
 	return nil
 }
 
+// Close closes the voting. It is not safe to use the voting after it is closed.
 func (v *Voting[T]) Close() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()

@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -287,34 +288,71 @@ func TestVoting(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v := newMarkusVoting[uint16](t)
+			t.Run("Compute", func(t *testing.T) {
+				v := newMarkusVoting[uint16](t)
 
-			if _, _, err := v.Add(tc.choicesCount); err != nil {
-				t.Fatal(err)
-			}
+				if _, _, err := v.AddChoices(tc.choicesCount); err != nil {
+					t.Fatal(err)
+				}
 
-			for _, b := range tc.ballots {
-				if b.unvote.Size > 0 {
-					if err := v.Unvote(b.unvote); err != nil {
-						t.Fatal(err)
-					}
-				} else {
-					if _, err := v.Vote(b.vote); err != nil {
-						t.Fatal(err)
+				for _, b := range tc.ballots {
+					if b.unvote.Size > 0 {
+						if err := v.Unvote(b.unvote); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						if _, err := v.Vote(b.vote); err != nil {
+							t.Fatal(err)
+						}
 					}
 				}
-			}
 
-			result, tie, _, err := v.ComputeSorted(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tie != tc.tie {
-				t.Errorf("got tie %v, want %v", tie, tc.tie)
-			}
-			if !reflect.DeepEqual(result, tc.result) {
-				t.Errorf("got result %+v, want %+v", result, tc.result)
-			}
+				results := make([]markus.Result, 0)
+				stale, err := v.Compute(context.Background(), func(r markus.Result) (bool, error) {
+					results = append(results, r)
+					return true, nil
+				})
+
+				sort.Slice(results, func(i, j int) bool {
+					if results[i].Wins == results[j].Wins {
+						return results[i].Index < results[j].Index
+					}
+					return results[i].Wins > results[j].Wins
+				})
+
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertEqual(t, "stale", stale, false)
+				assertEqual(t, "result", results, tc.result)
+			})
+			t.Run("ComputeSorted", func(t *testing.T) {
+				v := newMarkusVoting[uint16](t)
+
+				if _, _, err := v.AddChoices(tc.choicesCount); err != nil {
+					t.Fatal(err)
+				}
+
+				for _, b := range tc.ballots {
+					if b.unvote.Size > 0 {
+						if err := v.Unvote(b.unvote); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						if _, err := v.Vote(b.vote); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+
+				results, tie, stale, err := v.ComputeSorted(context.Background())
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertEqual(t, "stale", stale, false)
+				assertEqual(t, "tie", tie, tc.tie)
+				assertEqual(t, "result", results, tc.result)
+			})
 		})
 	}
 }
@@ -322,7 +360,7 @@ func TestVoting(t *testing.T) {
 func TestVoting_Unvote_afterAdd(t *testing.T) {
 	v := newMarkusVoting[uint64](t)
 
-	if _, _, err := v.Add(3); err != nil {
+	if _, _, err := v.AddChoices(3); err != nil {
 		t.Fatal(err)
 	}
 
@@ -332,7 +370,7 @@ func TestVoting_Unvote_afterAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := v.Add(1); err != nil {
+	if _, _, err := v.AddChoices(1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -369,13 +407,13 @@ func TestVoting_Unvote_afterAdd(t *testing.T) {
 
 func TestVoting_persistance(t *testing.T) {
 	dir := t.TempDir()
-	v, err := markus.New[uint16](dir)
+	v, err := markus.NewVoting[uint16](dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer v.Close()
 
-	if _, _, err := v.Add(5); err != nil {
+	if _, _, err := v.AddChoices(5); err != nil {
 		t.Fatal(err)
 	}
 
@@ -413,7 +451,7 @@ func TestVoting_persistance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v2, err := markus.New[uint16](dir)
+	v2, err := markus.NewVoting[uint16](dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +537,7 @@ func TestVoting_concurrency(t *testing.T) {
 				}
 
 				start := time.Now()
-				if _, _, err := v.Add(count); err != nil {
+				if _, _, err := v.AddChoices(count); err != nil {
 					t.Error(err)
 				}
 				if size > 0 {
@@ -568,7 +606,7 @@ func TestVoting_concurrency(t *testing.T) {
 	for _, m := range votingLog {
 		switch m := m.(type) {
 		case uint64:
-			if _, _, err := validation.Add(m); err != nil {
+			if _, _, err := validation.AddChoices(m); err != nil {
 				t.Fatal(err)
 			}
 		case markus.Ballot[uint64]:
@@ -598,7 +636,7 @@ func BenchmarkVoting_ComputeSorted(b *testing.B) {
 	v := newMarkusVoting[uint64](b)
 
 	b.Log("adding choices...")
-	if _, _, err := v.Add(choicesCount); err != nil {
+	if _, _, err := v.AddChoices(choicesCount); err != nil {
 		b.Fatal(err)
 	}
 
@@ -632,7 +670,7 @@ func BenchmarkVoting_Vote(b *testing.B) {
 	v := newMarkusVoting[uint64](b)
 
 	b.Log("adding choices...")
-	if _, _, err := v.Add(choicesCount); err != nil {
+	if _, _, err := v.AddChoices(choicesCount); err != nil {
 		b.Fatal(err)
 	}
 
@@ -671,7 +709,7 @@ func newMarkusVoting[T markus.Type](t testing.TB) *markus.Voting[T] {
 
 	dir := t.TempDir()
 
-	v, err := markus.New[T](dir)
+	v, err := markus.NewVoting[T](dir)
 	if err != nil {
 		t.Fatal(err)
 	}

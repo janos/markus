@@ -58,20 +58,6 @@ func (l *List[C]) Size() int {
 	return len(l.elements)
 }
 
-func (l *List[C]) Swap(item1, item2 C) {
-	i, ok := l.index[item1]
-	if !ok {
-		panic("item1 not found")
-	}
-	j, ok := l.index[item2]
-	if !ok {
-		panic("item2 not found")
-	}
-	l.elements[i], l.elements[j] = l.elements[j], l.elements[i]
-	l.index[l.elements[i]] = i
-	l.index[l.elements[j]] = j
-}
-
 func (l *List[C]) read() error {
 	f, err := os.OpenFile(l.path, os.O_RDONLY|os.O_CREATE, 0666)
 	if err != nil {
