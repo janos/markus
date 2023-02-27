@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"resenje.org/markus/internal/bitset"
+	"resenje.org/markus/internal/indexmap"
 	"resenje.org/markus/internal/matrix"
 )
 
@@ -26,6 +27,7 @@ type Type interface {
 type Voting[T Type] struct {
 	preferences  *matrix.Matrix[T]
 	strengths    *matrix.Matrix[T]
+	choicesIndex *indexmap.Map
 	choicesCount uint64
 	closed       bool
 
@@ -55,10 +57,15 @@ func NewVoting[T Type](path string) (*Voting[T], error) {
 	if s := strengths.Size(); size != s {
 		return nil, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", size, s)
 	}
+	im, err := indexmap.New(filepath.Join(path, "choices.index"))
+	if err != nil {
+		return nil, fmt.Errorf("open choices index: %w", err)
+	}
 	return &Voting[T]{
 		preferences:  preferences,
 		strengths:    strengths,
 		choicesCount: uint64(size),
+		choicesIndex: im,
 	}, nil
 }
 
@@ -82,9 +89,33 @@ func (v *Voting[T]) AddChoices(count uint64) (from, to uint64, err error) {
 		return 0, 0, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", to-from, strengthsTo-strengthsFrom)
 	}
 
+	for i := from; i <= to; i++ {
+		v.choicesIndex.Add(i)
+	}
+
+	if err := v.choicesIndex.Write(); err != nil {
+		return 0, 0, fmt.Errorf("write choices index: %w", err)
+	}
+
 	v.choicesCount = v.preferences.Size()
 
 	return from, to, nil
+}
+
+// RemoveChoices marks indexes as no longer available to vote for.
+func (v *Voting[T]) RemoveChoices(indexes ...uint64) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	for _, i := range indexes {
+		v.choicesIndex.Remove(i)
+	}
+
+	if err := v.choicesIndex.Write(); err != nil {
+		return fmt.Errorf("write choices index: %w", err)
+	}
+
+	return nil
 }
 
 // Ballot represents a single vote with ranked choices. Lowest number represents
@@ -115,11 +146,15 @@ func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 	ballotRanks := make(map[T][]uint64, ballotLen)
 
 	for index, rank := range b {
-		if index >= choicesLen {
-			return Record{}, &UnknownChoiceError{Index: index}
+		matrixIndex, has := v.choicesIndex.Get(index)
+		if !has {
+			return Record{}, &UnknownChoiceError{Index: matrixIndex}
+		}
+		if matrixIndex >= choicesLen {
+			return Record{}, &UnknownChoiceError{Index: matrixIndex}
 		}
 
-		ballotRanks[rank] = append(ballotRanks[rank], index)
+		ballotRanks[rank] = append(ballotRanks[rank], matrixIndex)
 	}
 
 	rankNumbers := make([]T, 0, len(ballotRanks))
@@ -150,8 +185,16 @@ func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 	for rank, choices1 := range ranks {
 		rest := ranks[rank+1:]
 		for _, index1 := range choices1 {
+			index1, has := v.choicesIndex.Get(index1)
+			if !has {
+				continue
+			}
 			for _, choices2 := range rest {
 				for _, index2 := range choices2 {
+					index2, has := v.choicesIndex.Get(index2)
+					if !has {
+						continue
+					}
 					v.preferences.Inc(index1, index2)
 				}
 			}
@@ -187,8 +230,16 @@ func (v *Voting[T]) Unvote(r Record) error {
 	for rank, choices1 := range ranks {
 		rest := ranks[rank+1:]
 		for _, index1 := range choices1 {
+			index1, has := v.choicesIndex.Get(index1)
+			if !has {
+				continue
+			}
 			for _, choices2 := range rest {
 				for _, index2 := range choices2 {
+					index2, has := v.choicesIndex.Get(index2)
+					if !has {
+						continue
+					}
 					v.preferences.Dec(index1, index2)
 				}
 			}
@@ -320,7 +371,19 @@ func (v *Voting[T]) calculatePairwiseStrengths(ctx context.Context) (stale bool,
 			return false, ctx.Err()
 		default:
 		}
+
+		i, has := v.choicesIndex.Get(i)
+		if !has {
+			continue
+		}
+
 		for j := uint64(0); j < choicesCount; j++ {
+
+			j, has := v.choicesIndex.Get(j)
+			if !has {
+				continue
+			}
+
 			if i == j {
 				continue
 			}
@@ -333,7 +396,17 @@ func (v *Voting[T]) calculatePairwiseStrengths(ctx context.Context) (stale bool,
 	}
 
 	for i := uint64(0); i < choicesCount; i++ {
+		i, has := v.choicesIndex.Get(i)
+		if !has {
+			continue
+		}
+
 		for j := uint64(0); j < choicesCount; j++ {
+			j, has := v.choicesIndex.Get(j)
+			if !has {
+				continue
+			}
+
 			if i == j {
 				continue
 			}
@@ -344,6 +417,11 @@ func (v *Voting[T]) calculatePairwiseStrengths(ctx context.Context) (stale bool,
 			}
 			ji := v.strengths.Get(j, i)
 			for k := uint64(0); k < choicesCount; k++ {
+				k, has := v.choicesIndex.Get(k)
+				if !has {
+					continue
+				}
+
 				if i == k || j == k {
 					continue
 				}
@@ -383,9 +461,19 @@ func (v *Voting[T]) calculateResults(ctx context.Context, f func(Result) (bool, 
 		default:
 		}
 
+		i, has := v.choicesIndex.Get(i)
+		if !has {
+			continue
+		}
+
 		var count int
 
 		for j := uint64(0); j < choicesCount; j++ {
+			j, has := v.choicesIndex.Get(j)
+			if !has {
+				continue
+			}
+
 			if i != j {
 				if v.strengths.Get(i, j) > v.strengths.Get(j, i) {
 					count++

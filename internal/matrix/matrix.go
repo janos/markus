@@ -6,6 +6,7 @@
 package matrix
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -159,7 +160,11 @@ func (m *Matrix[T]) Set(i, j uint64, e T) {
 	}
 	l := location(i, j)
 	buf := m.encode(e)
-	copy((*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize], buf)
+	src := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
+	if bytes.Equal(src, buf) {
+		return
+	}
+	copy(src, buf)
 }
 
 func (m *Matrix[T]) Inc(i, j uint64) {

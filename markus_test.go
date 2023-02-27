@@ -357,7 +357,7 @@ func TestVoting(t *testing.T) {
 	}
 }
 
-func TestVoting_Unvote_afterAdd(t *testing.T) {
+func TestVoting_Unvote_afterAddChoices(t *testing.T) {
 	v := newMarkusVoting[uint64](t)
 
 	if _, _, err := v.AddChoices(3); err != nil {
@@ -405,6 +405,78 @@ func TestVoting_Unvote_afterAdd(t *testing.T) {
 	assertEqual(t, "stale", stale, false)
 }
 
+func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
+	v := newMarkusVoting[uint64](t)
+
+	if _, _, err := v.AddChoices(8); err != nil {
+		t.Fatal(err)
+	}
+
+	ballot := markus.Ballot[uint64]{0: 1, 1: 2, 4: 3, 7: 4}
+	record, err := v.Vote(ballot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gotResults, tie, stale, err := v.ComputeSorted(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "gotResults", gotResults, []markus.Result{
+		{Index: 0, Wins: 7},
+		{Index: 1, Wins: 6},
+		{Index: 4, Wins: 5},
+		{Index: 7, Wins: 4},
+		{Index: 2, Wins: 0},
+		{Index: 3, Wins: 0},
+		{Index: 5, Wins: 0},
+		{Index: 6, Wins: 0},
+	})
+	assertEqual(t, "tie", tie, false)
+	assertEqual(t, "stale", stale, false)
+
+	if err := v.RemoveChoices(4, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v.Unvote(record); err != nil {
+		t.Fatal(err)
+	}
+
+	gotResults, tie, stale, err = v.ComputeSorted(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "gotResults", gotResults, []markus.Result{
+		{Index: 0, Wins: 0},
+		{Index: 1, Wins: 0},
+		{Index: 2, Wins: 0},
+		{Index: 3, Wins: 0},
+		{Index: 6, Wins: 0},
+		{Index: 7, Wins: 0},
+	})
+	assertEqual(t, "tie", tie, true)
+	assertEqual(t, "stale", stale, false)
+
+	if _, err := v.Vote(markus.Ballot[uint64]{3: 1, 7: 2}); err != nil {
+		t.Fatal(err)
+	}
+	gotResults, tie, stale, err = v.ComputeSorted(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "gotResults", gotResults, []markus.Result{
+		{Index: 3, Wins: 5},
+		{Index: 7, Wins: 4},
+		{Index: 0, Wins: 0},
+		{Index: 1, Wins: 0},
+		{Index: 2, Wins: 0},
+		{Index: 6, Wins: 0},
+	})
+	assertEqual(t, "tie", tie, false)
+	assertEqual(t, "stale", stale, false)
+}
+
 func TestVoting_persistance(t *testing.T) {
 	dir := t.TempDir()
 	v, err := markus.NewVoting[uint16](dir)
@@ -430,16 +502,19 @@ func TestVoting_persistance(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := v.RemoveChoices(4); err != nil {
+		t.Fatal(err)
+	}
+
 	results, tie, staled, err := v.ComputeSorted(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantResults := []markus.Result{
-		{Index: 3, Wins: 3},
-		{Index: 1, Wins: 2},
-		{Index: 2, Wins: 2},
+		{Index: 3, Wins: 2},
+		{Index: 1, Wins: 1},
+		{Index: 2, Wins: 1},
 		{Index: 0, Wins: 0},
-		{Index: 4, Wins: 0},
 	}
 	assertEqual(t, "results", results, wantResults)
 	wantTie := false
