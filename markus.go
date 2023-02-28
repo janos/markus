@@ -25,6 +25,7 @@ type Type interface {
 // Voting holds number of votes for every pair of choices. Methods on the Voting
 // type are safe for concurrent calls.
 type Voting[T Type] struct {
+	path         string
 	preferences  *matrix.Matrix[T]
 	strengths    *matrix.Matrix[T]
 	choicesIndex *indexmap.Map
@@ -49,22 +50,14 @@ func NewVoting[T Type](path string) (*Voting[T], error) {
 	if err != nil {
 		return nil, fmt.Errorf("open preferences matrix: %w", err)
 	}
-	strengths, err := matrix.New[T](filepath.Join(path, "strengths.matrix"))
-	if err != nil {
-		return nil, fmt.Errorf("open strengths matrix: %w", err)
-	}
-	size := preferences.Size()
-	if s := strengths.Size(); size != s {
-		return nil, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", size, s)
-	}
 	im, err := indexmap.New(filepath.Join(path, "choices.index"))
 	if err != nil {
 		return nil, fmt.Errorf("open choices index: %w", err)
 	}
 	return &Voting[T]{
+		path:         path,
 		preferences:  preferences,
-		strengths:    strengths,
-		choicesCount: uint64(size),
+		choicesCount: uint64(preferences.Size()),
 		choicesIndex: im,
 	}, nil
 }
@@ -77,16 +70,7 @@ func (v *Voting[T]) AddChoices(count uint64) (from, to uint64, err error) {
 
 	from, to, err = v.preferences.Resize(int64(count))
 	if err != nil {
-		return 0, 0, fmt.Errorf("resize matrix for %d: %w", count, err)
-	}
-
-	strengthsFrom, strengthsTo, err := v.strengths.Resize(int64(count))
-	if err != nil {
-		return 0, 0, fmt.Errorf("resize matrix for %d: %w", count, err)
-	}
-
-	if from != strengthsFrom || to != strengthsTo {
-		return 0, 0, fmt.Errorf("preferences matrix dimension %v and strengths matrix dimension %v do not match", to-from, strengthsTo-strengthsFrom)
+		return 0, 0, fmt.Errorf("resize preferences matrix for %d: %w", count, err)
 	}
 
 	for i := from; i <= to; i++ {
@@ -312,7 +296,7 @@ func (v *Voting[T]) ComputeSorted(ctx context.Context) (results []Result, tie, s
 		return true, nil
 	})
 	if err != nil {
-		return nil, false, false, fmt.Errorf("calculate results: %w", err)
+		return nil, false, false, fmt.Errorf("compute: %w", err)
 	}
 
 	sort.Slice(results, func(i, j int) bool {
@@ -330,24 +314,8 @@ func (v *Voting[T]) ComputeSorted(ctx context.Context) (results []Result, tie, s
 }
 
 func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
-	stale, err = v.calculatePairwiseStrengths(ctx)
-	if err != nil {
-		return false, fmt.Errorf("calculate pairwise strengths: %w", err)
-	}
-	if err = v.calculateResults(ctx, f); err != nil {
-		return false, fmt.Errorf("calculate results: %w", err)
-	}
-	return stale, nil
-}
-
-func (v *Voting[T]) calculatePairwiseStrengths(ctx context.Context) (stale bool, err error) {
 	choicesCount := v.choicesCount
 	if choicesCount == 0 {
-		return false, nil
-	}
-
-	preferencesVersion := v.preferences.Version()
-	if v.strengths.Version() == preferencesVersion {
 		return false, nil
 	}
 
@@ -358,6 +326,17 @@ func (v *Voting[T]) calculatePairwiseStrengths(ctx context.Context) (stale bool,
 		return true, nil
 	}
 	defer v.strengthsMu.Unlock()
+
+	preferencesVersion := v.preferences.Version()
+	if v.strengths != nil {
+		if v.strengths.Version() == preferencesVersion {
+			return false, nil
+		}
+	}
+
+	if err := v.prepareStrengthsMatrix(); err != nil {
+		return false, fmt.Errorf("prepare strengths matrix: %w", err)
+	}
 
 	// Invalidate the strengths matrix version to ensure that it will be
 	// recalculated even if the iteration is interrupted by a context.
@@ -448,16 +427,10 @@ func (v *Voting[T]) calculatePairwiseStrengths(ctx context.Context) (stale bool,
 		return false, fmt.Errorf("sync strengths matrix: %w", err)
 	}
 
-	return false, nil
-}
-
-func (v *Voting[T]) calculateResults(ctx context.Context, f func(Result) (bool, error)) error {
-	choicesCount := v.choicesCount
-
 	for i := uint64(0); i < choicesCount; i++ {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return false, ctx.Err()
 		default:
 		}
 
@@ -482,14 +455,14 @@ func (v *Voting[T]) calculateResults(ctx context.Context, f func(Result) (bool, 
 		}
 		cont, err := f(Result{Index: i, Wins: count})
 		if err != nil {
-			return fmt.Errorf("calculate results: %w", err)
+			return false, fmt.Errorf("calculate results: %w", err)
 		}
 		if !cont {
-			return nil
+			return false, nil
 		}
 	}
 
-	return nil
+	return false, nil
 }
 
 // Close closes the voting. It is not safe to use the voting after it is closed.
@@ -506,11 +479,35 @@ func (v *Voting[T]) Close() error {
 		return fmt.Errorf("close preferences matrix: %w", err)
 	}
 
-	if err := v.strengths.Close(); err != nil {
-		return fmt.Errorf("close strengths matrix: %w", err)
+	if v.strengths != nil {
+		if err := v.strengths.Close(); err != nil {
+			return fmt.Errorf("close strengths matrix: %w", err)
+		}
 	}
 
 	return nil
+}
+
+func (v *Voting[T]) prepareStrengthsMatrix() error {
+	if v.strengths == nil || v.strengths.Sync() != nil {
+		strengths, err := matrix.New[T](v.strengthsMatrixFilename())
+		if err != nil {
+			return fmt.Errorf("open: %w", err)
+		}
+		v.strengths = strengths
+	}
+
+	if diff := int64(v.preferences.Size()) - int64(v.strengths.Size()); diff > 0 {
+		if _, _, err := v.strengths.Resize(diff); err != nil {
+			return fmt.Errorf("resize for %d: %w", diff, err)
+		}
+	}
+
+	return nil
+}
+
+func (v *Voting[T]) strengthsMatrixFilename() string {
+	return filepath.Join(v.path, "strengths.matrix")
 }
 
 func min[T Type](a, b T) T {

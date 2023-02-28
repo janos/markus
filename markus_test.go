@@ -8,6 +8,7 @@ package markus_test
 import (
 	"context"
 	"math/rand"
+	"os"
 	"reflect"
 	"runtime"
 	"sort"
@@ -698,6 +699,86 @@ func TestVoting_concurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "staled", wantStaled, false)
+
+	assertEqual(t, "results", gotResults, wantResults)
+	assertEqual(t, "tie", gotTie, wantTie)
+}
+
+func TestVoting_strenghtsMatrixPreparation(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := markus.NewVoting[uint64](dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := v.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	const choicesCount = 34
+
+	if _, _, err := v.AddChoices(choicesCount); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 20; i++ {
+		ballot := make(markus.Ballot[uint64])
+		ballot[rand.Uint64()%choicesCount] = 1
+		ballot[rand.Uint64()%choicesCount] = 1
+		ballot[rand.Uint64()%choicesCount] = 2
+		ballot[rand.Uint64()%choicesCount] = 3
+		ballot[rand.Uint64()%choicesCount] = 20
+		ballot[rand.Uint64()%choicesCount] = 20
+		if _, err := v.Vote(ballot); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	wantResults, wantTie, stale, err := v.ComputeSorted(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "staled", stale, false)
+
+	if runtime.GOOS != "windows" { // windows does not allow file to be removed
+		// check results on file removal
+		if err := os.Remove(v.StrengthsMatrixFilename()); err != nil {
+			t.Fatal(err)
+		}
+
+		gotResults, gotTie, stale, err := v.ComputeSorted(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEqual(t, "staled", stale, false)
+
+		assertEqual(t, "results", gotResults, make([]markus.Result, 0))
+		assertEqual(t, "tie", gotTie, false)
+	}
+
+	if err := v.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	v2, err := markus.NewVoting[uint64](dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := v2.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
+	gotResults, gotTie, stale, err := v2.ComputeSorted(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "staled", stale, false)
 
 	assertEqual(t, "results", gotResults, wantResults)
 	assertEqual(t, "tie", gotTie, wantTie)
