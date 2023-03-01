@@ -755,8 +755,8 @@ func TestVoting_strenghtsMatrixPreparation(t *testing.T) {
 		}
 		assertEqual(t, "staled", stale, false)
 
-		assertEqual(t, "results", gotResults, make([]markus.Result, 0))
-		assertEqual(t, "tie", gotTie, false)
+		assertEqual(t, "results", gotResults, wantResults)
+		assertEqual(t, "tie", gotTie, wantTie)
 	}
 
 	if err := v.Close(); err != nil {

@@ -328,103 +328,100 @@ func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (
 	defer v.strengthsMu.Unlock()
 
 	preferencesVersion := v.preferences.Version()
-	if v.strengths != nil {
-		if v.strengths.Version() == preferencesVersion {
-			return false, nil
-		}
-	}
 
 	if err := v.prepareStrengthsMatrix(); err != nil {
 		return false, fmt.Errorf("prepare strengths matrix: %w", err)
 	}
 
-	// Invalidate the strengths matrix version to ensure that it will be
-	// recalculated even if the iteration is interrupted by a context.
-	if err := v.strengths.SetVersion(0); err != nil {
-		return false, fmt.Errorf("invalidate strengths matrix version: %w", err)
-	}
-
-	for i := uint64(0); i < choicesCount; i++ {
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		default:
+	if v.strengths.Version() != preferencesVersion {
+		// Invalidate the strengths matrix version to ensure that it will be
+		// recalculated even if the iteration is interrupted by a context.
+		if err := v.strengths.SetVersion(0); err != nil {
+			return false, fmt.Errorf("invalidate strengths matrix version: %w", err)
 		}
 
-		i, has := v.choicesIndex.Get(i)
-		if !has {
-			continue
-		}
-
-		for j := uint64(0); j < choicesCount; j++ {
-
-			j, has := v.choicesIndex.Get(j)
-			if !has {
-				continue
-			}
-
-			if i == j {
-				continue
-			}
-			if c := v.preferences.Get(i, j); c > v.preferences.Get(j, i) {
-				v.strengths.Set(i, j, c)
-			} else {
-				v.strengths.Set(i, j, 0)
-			}
-		}
-	}
-
-	for i := uint64(0); i < choicesCount; i++ {
-		i, has := v.choicesIndex.Get(i)
-		if !has {
-			continue
-		}
-
-		for j := uint64(0); j < choicesCount; j++ {
-			j, has := v.choicesIndex.Get(j)
-			if !has {
-				continue
-			}
-
-			if i == j {
-				continue
-			}
+		for i := uint64(0); i < choicesCount; i++ {
 			select {
 			case <-ctx.Done():
 				return false, ctx.Err()
 			default:
 			}
-			ji := v.strengths.Get(j, i)
-			for k := uint64(0); k < choicesCount; k++ {
-				k, has := v.choicesIndex.Get(k)
+
+			i, has := v.choicesIndex.Get(i)
+			if !has {
+				continue
+			}
+
+			for j := uint64(0); j < choicesCount; j++ {
+
+				j, has := v.choicesIndex.Get(j)
 				if !has {
 					continue
 				}
 
-				if i == k || j == k {
+				if i == j {
 					continue
 				}
-				jk := v.strengths.Get(j, k)
-				m := max(
-					jk,
-					min(
-						ji,
-						v.strengths.Get(i, k),
-					),
-				)
-				if m != jk {
-					v.strengths.Set(j, k, m)
+				if c := v.preferences.Get(i, j); c > v.preferences.Get(j, i) {
+					v.strengths.Set(i, j, c)
+				} else {
+					v.strengths.Set(i, j, 0)
 				}
 			}
 		}
-	}
 
-	if err := v.strengths.SetVersion(preferencesVersion); err != nil {
-		return false, fmt.Errorf("set strengths matrix version: %w", err)
-	}
+		for i := uint64(0); i < choicesCount; i++ {
+			i, has := v.choicesIndex.Get(i)
+			if !has {
+				continue
+			}
 
-	if err := v.strengths.Sync(); err != nil {
-		return false, fmt.Errorf("sync strengths matrix: %w", err)
+			for j := uint64(0); j < choicesCount; j++ {
+				j, has := v.choicesIndex.Get(j)
+				if !has {
+					continue
+				}
+
+				if i == j {
+					continue
+				}
+				select {
+				case <-ctx.Done():
+					return false, ctx.Err()
+				default:
+				}
+				ji := v.strengths.Get(j, i)
+				for k := uint64(0); k < choicesCount; k++ {
+					k, has := v.choicesIndex.Get(k)
+					if !has {
+						continue
+					}
+
+					if i == k || j == k {
+						continue
+					}
+					jk := v.strengths.Get(j, k)
+					m := max(
+						jk,
+						min(
+							ji,
+							v.strengths.Get(i, k),
+						),
+					)
+					if m != jk {
+						v.strengths.Set(j, k, m)
+					}
+				}
+			}
+		}
+
+		if err := v.strengths.SetVersion(preferencesVersion); err != nil {
+			return false, fmt.Errorf("set strengths matrix version: %w", err)
+		}
+
+		if err := v.strengths.Sync(); err != nil {
+			return false, fmt.Errorf("sync strengths matrix: %w", err)
+		}
 	}
 
 	for i := uint64(0); i < choicesCount; i++ {
