@@ -62,8 +62,8 @@ func NewVoting[T Type](path string) (*Voting[T], error) {
 	}, nil
 }
 
-// AddChoices adds new choices to the voting. It returns the index of the first
-// new choice and the index of the last new choice.
+// AddChoices adds new choices to the voting. It returns the range of the new
+// indexes, with to value as non-inclusive.
 func (v *Voting[T]) AddChoices(count uint64) (from, to uint64, err error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -73,7 +73,7 @@ func (v *Voting[T]) AddChoices(count uint64) (from, to uint64, err error) {
 		return 0, 0, fmt.Errorf("resize preferences matrix for %d: %w", count, err)
 	}
 
-	for i := from; i <= to; i++ {
+	for i := from; i < to; i++ {
 		v.choicesIndex.Add(i)
 	}
 
