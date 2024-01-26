@@ -40,7 +40,7 @@ func TestVoting(t *testing.T) {
 			name:         "single option no votes",
 			choicesCount: 1,
 			result: []markus.Result{
-				{Index: 0, Wins: 0},
+				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -50,7 +50,7 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{0: 1}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 0},
+				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -60,8 +60,8 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{0: 1}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 1},
-				{Index: 1, Wins: 0},
+				{Index: 0, Wins: 1, Strength: 1, Advantage: 1},
+				{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -72,9 +72,8 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{0: 1, 1: 2}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 1},
-				{Index: 1, Wins: 0},
-			},
+				{Index: 0, Wins: 1, Strength: 2, Advantage: 2},
+				{Index: 1, Wins: 0, Strength: 0, Advantage: 0}},
 		},
 		{
 			name:         "three options three votes",
@@ -85,9 +84,9 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{0: 1, 1: 2, 2: 3}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 2},
-				{Index: 1, Wins: 1},
-				{Index: 2, Wins: 0},
+				{Index: 0, Wins: 2, Strength: 6, Advantage: 6},
+				{Index: 1, Wins: 1, Strength: 2, Advantage: 2},
+				{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -98,9 +97,9 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{1: 1}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 1},
-				{Index: 1, Wins: 1},
-				{Index: 2, Wins: 0},
+				{Index: 0, Wins: 1, Strength: 1, Advantage: 1},
+				{Index: 1, Wins: 1, Strength: 1, Advantage: 1},
+				{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
 			},
 			tie: true,
 		},
@@ -114,11 +113,11 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{0: 1, 1: 200, 2: 10}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 4},
-				{Index: 1, Wins: 2},
-				{Index: 2, Wins: 2},
-				{Index: 3, Wins: 0},
-				{Index: 4, Wins: 0},
+				{Index: 0, Wins: 4, Strength: 13, Advantage: 13},
+				{Index: 1, Wins: 2, Strength: 8, Advantage: 8},
+				{Index: 2, Wins: 2, Strength: 6, Advantage: 6},
+				{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+				{Index: 4, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -179,11 +178,11 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
 			},
 			result: []markus.Result{
-				{Index: 4, Wins: 4},
-				{Index: 0, Wins: 3},
-				{Index: 2, Wins: 2},
-				{Index: 1, Wins: 1},
-				{Index: 3, Wins: 0},
+				{Index: 4, Wins: 4, Strength: 112, Advantage: 16},
+				{Index: 0, Wins: 3, Strength: 86, Advantage: 11},
+				{Index: 2, Wins: 2, Strength: 58, Advantage: 2},
+				{Index: 1, Wins: 1, Strength: 33, Advantage: 5},
+				{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -197,7 +196,7 @@ func TestVoting(t *testing.T) {
 				}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 0},
+				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -211,8 +210,8 @@ func TestVoting(t *testing.T) {
 				}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 0},
-				{Index: 1, Wins: 0},
+				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
+				{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
 			},
 			tie: true,
 		},
@@ -230,11 +229,11 @@ func TestVoting(t *testing.T) {
 				}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 3},
-				{Index: 1, Wins: 2},
-				{Index: 2, Wins: 2},
-				{Index: 3, Wins: 0},
-				{Index: 4, Wins: 0},
+				{Index: 0, Wins: 3, Strength: 8, Advantage: 8},
+				{Index: 1, Wins: 2, Strength: 6, Advantage: 6},
+				{Index: 2, Wins: 2, Strength: 4, Advantage: 4},
+				{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+				{Index: 4, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -259,11 +258,11 @@ func TestVoting(t *testing.T) {
 				}},
 			},
 			result: []markus.Result{
-				{Index: 0, Wins: 4},
-				{Index: 2, Wins: 3},
-				{Index: 1, Wins: 2},
-				{Index: 3, Wins: 0},
-				{Index: 4, Wins: 0},
+				{Index: 0, Wins: 4, Strength: 4, Advantage: 4},
+				{Index: 2, Wins: 3, Strength: 3, Advantage: 3},
+				{Index: 1, Wins: 2, Strength: 2, Advantage: 2},
+				{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+				{Index: 4, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 		{
@@ -283,8 +282,8 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot[uint16]{1: 1}},
 			},
 			result: []markus.Result{
-				{Index: 1, Wins: 1},
-				{Index: 0, Wins: 0},
+				{Index: 1, Wins: 1, Strength: 1, Advantage: 1},
+				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
 			},
 		},
 	} {
@@ -380,10 +379,10 @@ func TestVoting_Unvote_afterAddChoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 2},
-		{Index: 1, Wins: 1},
-		{Index: 2, Wins: 0},
-		{Index: 3, Wins: 0},
+		{Index: 0, Wins: 2, Strength: 2, Advantage: 2},
+		{Index: 1, Wins: 1, Strength: 1, Advantage: 1},
+		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
 	})
 	assertEqual(t, "tie", tie, false)
 	assertEqual(t, "stale", stale, false)
@@ -397,10 +396,10 @@ func TestVoting_Unvote_afterAddChoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 0},
-		{Index: 1, Wins: 0},
-		{Index: 2, Wins: 0},
-		{Index: 3, Wins: 0},
+		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
 	})
 	assertEqual(t, "tie", tie, true)
 	assertEqual(t, "stale", stale, false)
@@ -424,14 +423,14 @@ func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 7},
-		{Index: 1, Wins: 6},
-		{Index: 4, Wins: 5},
-		{Index: 7, Wins: 4},
-		{Index: 2, Wins: 0},
-		{Index: 3, Wins: 0},
-		{Index: 5, Wins: 0},
-		{Index: 6, Wins: 0},
+		{Index: 0, Wins: 7, Strength: 7, Advantage: 7},
+		{Index: 1, Wins: 6, Strength: 6, Advantage: 6},
+		{Index: 4, Wins: 5, Strength: 5, Advantage: 5},
+		{Index: 7, Wins: 4, Strength: 4, Advantage: 4},
+		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 5, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 6, Wins: 0, Strength: 0, Advantage: 0},
 	})
 	assertEqual(t, "tie", tie, false)
 	assertEqual(t, "stale", stale, false)
@@ -449,12 +448,12 @@ func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 0},
-		{Index: 1, Wins: 0},
-		{Index: 2, Wins: 0},
-		{Index: 3, Wins: 0},
-		{Index: 6, Wins: 0},
-		{Index: 7, Wins: 0},
+		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 6, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 7, Wins: 0, Strength: 0, Advantage: 0},
 	})
 	assertEqual(t, "tie", tie, true)
 	assertEqual(t, "stale", stale, false)
@@ -467,12 +466,12 @@ func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 3, Wins: 5},
-		{Index: 7, Wins: 4},
-		{Index: 0, Wins: 0},
-		{Index: 1, Wins: 0},
-		{Index: 2, Wins: 0},
-		{Index: 6, Wins: 0},
+		{Index: 3, Wins: 5, Strength: 5, Advantage: 5},
+		{Index: 7, Wins: 4, Strength: 4, Advantage: 4},
+		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 6, Wins: 0, Strength: 0, Advantage: 0},
 	})
 	assertEqual(t, "tie", tie, false)
 	assertEqual(t, "stale", stale, false)
@@ -512,10 +511,10 @@ func TestVoting_persistance(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantResults := []markus.Result{
-		{Index: 3, Wins: 2},
-		{Index: 1, Wins: 1},
-		{Index: 2, Wins: 1},
-		{Index: 0, Wins: 0},
+		{Index: 3, Wins: 2, Strength: 2, Advantage: 2},
+		{Index: 1, Wins: 1, Strength: 1, Advantage: 1},
+		{Index: 2, Wins: 1, Strength: 1, Advantage: 1},
+		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
 	}
 	assertEqual(t, "results", results, wantResults)
 	wantTie := false
@@ -845,7 +844,7 @@ func assertEqual[T any](t testing.TB, name string, got, want T) {
 	t.Helper()
 
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %s %+v, want %+v", name, got, want)
+		t.Errorf("got %s %#+v, want %+#v", name, got, want)
 	}
 }
 

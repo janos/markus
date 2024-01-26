@@ -57,7 +57,7 @@ func NewVoting[T Type](path string) (*Voting[T], error) {
 	return &Voting[T]{
 		path:         path,
 		preferences:  preferences,
-		choicesCount: uint64(preferences.Size()),
+		choicesCount: preferences.Size(),
 		choicesIndex: im,
 	}, nil
 }
@@ -261,7 +261,20 @@ type Result struct {
 	// 0-based ordinal number of the choice in the choice slice.
 	Index uint64
 	// Number of wins in pairwise comparisons to other choices votings.
-	Wins int
+	Wins uint64
+	// Total number of votes in the weakest link of the strongest path in wins
+	// in pairwise comparisons to other choices votings. Strength does not
+	// effect the winner, and may be less then the Strength of the choice with
+	// more wins.
+	Strength uint64
+	// Total number of preferred votes (difference between votes of the winner
+	// choice and the opponent choice) in the weakest link of the strongest path
+	// in wins in pairwise comparisons to other choices votings. Advantage does
+	// not effect the winner, and may be less then the Advantage of the choice
+	// with more wins. The code with less wins and greater Advantage had
+	// stronger but fewer wins and that information can be taken into the
+	// analysis of the results.
+	Advantage uint64
 }
 
 // Size returns the number of choices in the voting.
@@ -436,7 +449,9 @@ func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (
 			continue
 		}
 
-		var count int
+		var wins uint64
+		var strength uint64
+		var advantage uint64
 
 		for j := uint64(0); j < choicesCount; j++ {
 			j, has := v.choicesIndex.Get(j)
@@ -445,12 +460,16 @@ func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (
 			}
 
 			if i != j {
-				if v.strengths.Get(i, j) > v.strengths.Get(j, i) {
-					count++
+				ijVotes := v.strengths.Get(i, j)
+				jiVotes := v.strengths.Get(j, i)
+				if ijVotes > jiVotes {
+					wins++
+					strength += uint64(ijVotes)
+					advantage += uint64(ijVotes) - uint64(jiVotes)
 				}
 			}
 		}
-		cont, err := f(Result{Index: i, Wins: count})
+		cont, err := f(Result{Index: i, Wins: wins, Strength: strength, Advantage: advantage})
 		if err != nil {
 			return false, fmt.Errorf("calculate results: %w", err)
 		}
