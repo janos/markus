@@ -703,7 +703,7 @@ func TestVoting_concurrency(t *testing.T) {
 	assertEqual(t, "tie", gotTie, wantTie)
 }
 
-func TestVoting_strenghtsMatrixPreparation(t *testing.T) {
+func TestVoting_strengthsMatrixPreparation(t *testing.T) {
 	dir := t.TempDir()
 
 	v, err := markus.NewVoting[uint64](dir)
@@ -814,6 +814,8 @@ func BenchmarkVoting_ComputeSorted(b *testing.B) {
 
 	for n := 0; n < b.N; n++ {
 		_, _, _, _ = v.ComputeSorted(context.Background())
+		err := v.InvalidateStrengthMatrix()
+		assertEqual(b, "invalidate strength matrix", err, nil)
 	}
 }
 

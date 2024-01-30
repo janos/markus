@@ -8,3 +8,7 @@ package markus
 func (v *Voting[T]) StrengthsMatrixFilename() string {
 	return v.strengthsMatrixFilename()
 }
+
+func (v *Voting[T]) InvalidateStrengthMatrix() error {
+	return v.strengths.SetVersion(0)
+}
