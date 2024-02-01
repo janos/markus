@@ -314,10 +314,13 @@ func TestVoting(t *testing.T) {
 				})
 
 				sort.Slice(results, func(i, j int) bool {
-					if results[i].Wins == results[j].Wins {
-						return results[i].Index < results[j].Index
+					if results[i].Wins != results[j].Wins {
+						return results[i].Wins > results[j].Wins
 					}
-					return results[i].Wins > results[j].Wins
+					if results[i].Strength != results[j].Strength {
+						return results[i].Strength > results[j].Strength
+					}
+					return results[i].Index < results[j].Index
 				})
 
 				if err != nil {
