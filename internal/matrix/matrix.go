@@ -8,7 +8,6 @@ package matrix
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 	"unsafe"
@@ -17,24 +16,18 @@ import (
 const (
 	versionSize    = 8
 	maxElementSize = 8
+	elementSize    = uint64(unsafe.Sizeof(uint32(0)))
 )
 
-type Type interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
+type Matrix struct {
+	mmap      *mmap
+	dataPtr   unsafe.Pointer
+	file      *os.File
+	path      string
+	encodeBuf []byte
 }
 
-type Matrix[T Type] struct {
-	mmap        *mmap
-	dataPtr     unsafe.Pointer
-	file        *os.File
-	path        string
-	elementSize uint64
-
-	decode func([]byte) T
-	encode func(T) []byte
-}
-
-func New[T Type](path string) (*Matrix[T], error) {
+func New(path string) (*Matrix, error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
@@ -50,50 +43,27 @@ func New[T Type](path string) (*Matrix[T], error) {
 		return nil, fmt.Errorf("mmap file: %w", err)
 	}
 
-	elementSize := uint64(unsafe.Sizeof(T(0)))
-
-	m := &Matrix[T]{
-		mmap:        mmap,
-		file:        f,
-		path:        path,
-		elementSize: elementSize,
+	m := &Matrix{
+		mmap:      mmap,
+		file:      f,
+		path:      path,
+		encodeBuf: make([]byte, elementSize),
 	}
 
 	if len(*mmap) != 0 {
 		m.dataPtr = unsafe.Add(unsafe.Pointer(&(*mmap)[0]), versionSize)
 	}
-
-	switch any(T(0)).(type) {
-	case uint8:
-		m.decode = func(data []byte) T { return (T)(data[0]) }
-		m.encode = func(v T) []byte { return []byte{byte(v)} }
-	case uint16:
-		m.decode = func(data []byte) T { return (T)(binary.LittleEndian.Uint16(data)) }
-		buf := make([]byte, elementSize)
-		m.encode = func(v T) []byte { binary.LittleEndian.PutUint16(buf, uint16(v)); return buf }
-	case uint32:
-		m.decode = func(data []byte) T { return (T)(binary.LittleEndian.Uint32(data)) }
-		buf := make([]byte, elementSize)
-		m.encode = func(v T) []byte { binary.LittleEndian.PutUint32(buf, uint32(v)); return buf }
-	case uint64:
-		m.decode = func(data []byte) T { return (T)(binary.LittleEndian.Uint64(data)) }
-		buf := make([]byte, elementSize)
-		m.encode = func(v T) []byte { binary.LittleEndian.PutUint64(buf, uint64(v)); return buf }
-	default:
-		return nil, errors.New("unsupported type")
-	}
-
 	return m, nil
 }
 
-func (m *Matrix[T]) Version() int64 {
+func (m *Matrix) Version() int64 {
 	if len(*m.mmap) < versionSize {
 		return 0
 	}
 	return int64(binary.LittleEndian.Uint64((*m.mmap)[:versionSize]))
 }
 
-func (m *Matrix[T]) SetVersion(version int64) error {
+func (m *Matrix) SetVersion(version int64) error {
 	if len(*m.mmap) < versionSize {
 		if _, _, err := m.Resize(0); err != nil {
 			return err
@@ -103,7 +73,7 @@ func (m *Matrix[T]) SetVersion(version int64) error {
 	return nil
 }
 
-func (m *Matrix[T]) Resize(diff int64) (from, to uint64, err error) {
+func (m *Matrix) Resize(diff int64) (from, to uint64, err error) {
 	currentSize := m.Size()
 
 	var newSize uint64
@@ -129,7 +99,7 @@ func (m *Matrix[T]) Resize(diff int64) (from, to uint64, err error) {
 		return 0, 0, fmt.Errorf("sync file: %w", err)
 	}
 
-	fileSize := int64(versionSize + newSize*newSize*m.elementSize)
+	fileSize := int64(versionSize + newSize*newSize*elementSize)
 	if err := m.file.Truncate(fileSize); err != nil {
 		return 0, 0, fmt.Errorf("truncate file: %w", err)
 	}
@@ -145,47 +115,35 @@ func (m *Matrix[T]) Resize(diff int64) (from, to uint64, err error) {
 	return currentSize, newSize, nil
 }
 
-func (m *Matrix[T]) Get(i, j uint64) T {
-	if m.dataPtr == nil {
-		return T(0)
-	}
+func (m *Matrix) Get(i, j uint64) uint32 {
 	l := location(i, j)
-	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
+	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	return m.decode(buf)
 }
 
-func (m *Matrix[T]) Set(i, j uint64, e T) {
-	if m.dataPtr == nil {
-		return
-	}
+func (m *Matrix) Set(i, j uint64, e uint32) {
 	l := location(i, j)
 	buf := m.encode(e)
-	src := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
+	src := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	if bytes.Equal(src, buf) {
 		return
 	}
 	copy(src, buf)
 }
 
-func (m *Matrix[T]) Inc(i, j uint64) {
-	if m.dataPtr == nil {
-		return
-	}
+func (m *Matrix) Inc(i, j uint64) {
 	l := location(i, j)
-	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
+	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	incrementLittleEndian(buf)
 }
 
-func (m *Matrix[T]) Dec(i, j uint64) {
-	if m.dataPtr == nil {
-		return
-	}
+func (m *Matrix) Dec(i, j uint64) {
 	l := location(i, j)
-	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*m.elementSize))[0:m.elementSize:m.elementSize]
+	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	decrementLittleEndian(buf)
 }
 
-func (m *Matrix[T]) Sync() error {
+func (m *Matrix) Sync() error {
 	if err := m.mmap.sync(); err != nil {
 		return fmt.Errorf("sync mmap size %d: %w", len(*m.mmap), err)
 	}
@@ -195,15 +153,15 @@ func (m *Matrix[T]) Sync() error {
 	return nil
 }
 
-func (m *Matrix[T]) Size() uint64 {
+func (m *Matrix) Size() uint64 {
 	length := uint64(len(*m.mmap))
 	if length < versionSize {
 		return 0
 	}
-	return floorSqrt((length - versionSize) / m.elementSize)
+	return floorSqrt((length - versionSize) / elementSize)
 }
 
-func (m *Matrix[T]) Close() error {
+func (m *Matrix) Close() error {
 	if err := m.mmap.unmap(); err != nil {
 		return fmt.Errorf("unmap: %w", err)
 	}
@@ -216,13 +174,23 @@ func (m *Matrix[T]) Close() error {
 	return nil
 }
 
+func (m *Matrix) decode(data []byte) uint32 {
+	return binary.LittleEndian.Uint32(data)
+}
+
+func (m *Matrix) encode(v uint32) []byte {
+	binary.LittleEndian.PutUint32(m.encodeBuf, v)
+	return m.encodeBuf
+}
+
 // matrix i,j = 0,0 0,1 1,0 1,1 0,2 1,2 2,0 2,1 2,2 0,3 1,3 2,3 3,0 3,1 3,2 3,3
 // array  n   =   0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
 func location(i, j uint64) uint64 {
-	if i < j {
-		return j*j + i
-	}
-	return i*i + i + j
+	// if i < j {
+	// 	return j*j + i
+	// }
+	// return i*i + i + j
+	return (i*i + i + j) - ((i-j)>>63)*(i*i+i+j-(j*j+i))
 }
 
 func floorSqrt(x uint64) uint64 {

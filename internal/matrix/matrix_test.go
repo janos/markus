@@ -19,10 +19,10 @@ import (
 const matrixSize = 1000
 
 func TestMatrix(t *testing.T) {
-	m := newMatrix[uint16](t)
+	m := newMatrix(t)
 
-	elementValueFirst := func(i, j uint64) uint16 {
-		return uint16((i+1)*100000000000000000 + j + 1)
+	elementValueFirst := func(i, j uint64) uint32 {
+		return uint32((i+1)*100000000000000000 + j + 1)
 	}
 
 	from, to, err := m.Resize(1)
@@ -59,8 +59,8 @@ func TestMatrix(t *testing.T) {
 		}
 	}
 
-	elementValueSecond := func(i, j uint64) uint16 {
-		return uint16((i+1)*111111111111111111 + j + 1)
+	elementValueSecond := func(i, j uint64) uint32 {
+		return uint32((i+1)*111111111111111111 + j + 1)
 	}
 
 	from, to, err = m.Resize(3)
@@ -119,7 +119,7 @@ func TestMatrix(t *testing.T) {
 	assertEqual(t, "version", version, 123)
 
 	{
-		m := newMatrix[uint16](t)
+		m := newMatrix(t)
 
 		version := m.Version()
 		assertEqual(t, "version", version, 0)
@@ -131,7 +131,7 @@ func TestMatrix(t *testing.T) {
 }
 
 func BenchmarkMatrix_Get(b *testing.B) {
-	m := newMatrix[uint64](b)
+	m := newMatrix(b)
 
 	const size = matrixSize
 
@@ -142,7 +142,7 @@ func BenchmarkMatrix_Get(b *testing.B) {
 
 	b.ResetTimer()
 
-	var e uint64
+	var e uint32
 	for i := 0; i < b.N; i++ {
 		i, j := rand.Uint64()%size, rand.Uint64()%size
 		e = m.Get(i, j)
@@ -151,7 +151,7 @@ func BenchmarkMatrix_Get(b *testing.B) {
 }
 
 func BenchmarkMatrix_Set(b *testing.B) {
-	m := newMatrix[uint64](b)
+	m := newMatrix(b)
 
 	const size = matrixSize
 
@@ -164,7 +164,7 @@ func BenchmarkMatrix_Set(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		i, j := rand.Uint64()%size, rand.Uint64()%size
-		m.Set(i, j, rand.Uint64())
+		m.Set(i, j, rand.Uint32())
 	}
 
 	b.StartTimer()
@@ -174,7 +174,7 @@ func BenchmarkMatrix_Set(b *testing.B) {
 }
 
 func BenchmarkMatrix_Inc(b *testing.B) {
-	m := newMatrix[uint64](b)
+	m := newMatrix(b)
 
 	const size = matrixSize
 
@@ -196,12 +196,12 @@ func BenchmarkMatrix_Inc(b *testing.B) {
 	assertError(b, err, nil)
 }
 
-func newMatrix[T matrix.Type](t testing.TB) *matrix.Matrix[T] {
+func newMatrix(t testing.TB) *matrix.Matrix {
 	t.Helper()
 
 	dir := t.TempDir()
 
-	m, err := matrix.New[T](filepath.Join(dir, "matrix.mx"))
+	m, err := matrix.New(filepath.Join(dir, "matrix.mx"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,10 +5,10 @@
 
 package markus
 
-func (v *Voting[T]) StrengthsMatrixFilename() string {
+func (v *Voting) StrengthsMatrixFilename() string {
 	return v.strengthsMatrixFilename()
 }
 
-func (v *Voting[T]) InvalidateStrengthMatrix() error {
+func (v *Voting) InvalidateStrengthMatrix() error {
 	return v.strengths.SetVersion(0)
 }

@@ -18,16 +18,12 @@ import (
 	"resenje.org/markus/internal/matrix"
 )
 
-type Type interface {
-	~uint8 | ~uint16 | ~uint32 | ~uint64
-}
-
 // Voting holds number of votes for every pair of choices. Methods on the Voting
 // type are safe for concurrent calls.
-type Voting[T Type] struct {
+type Voting struct {
 	path         string
-	preferences  *matrix.Matrix[T]
-	strengths    *matrix.Matrix[T]
+	preferences  *matrix.Matrix
+	strengths    *matrix.Matrix
 	choicesIndex *indexmap.Map
 	choicesCount uint64
 	closed       bool
@@ -38,7 +34,7 @@ type Voting[T Type] struct {
 
 // NewVoting initializes a new voting with state stored in the provided
 // directory.
-func NewVoting[T Type](path string) (*Voting[T], error) {
+func NewVoting(path string) (*Voting, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		if err := os.MkdirAll(path, 0777); err != nil {
 			return nil, fmt.Errorf("create directory: %w", err)
@@ -46,7 +42,7 @@ func NewVoting[T Type](path string) (*Voting[T], error) {
 	} else if err != nil {
 		return nil, fmt.Errorf("stat directory: %w", err)
 	}
-	preferences, err := matrix.New[T](filepath.Join(path, "preferences.matrix"))
+	preferences, err := matrix.New(filepath.Join(path, "preferences.matrix"))
 	if err != nil {
 		return nil, fmt.Errorf("open preferences matrix: %w", err)
 	}
@@ -54,7 +50,7 @@ func NewVoting[T Type](path string) (*Voting[T], error) {
 	if err != nil {
 		return nil, fmt.Errorf("open choices index: %w", err)
 	}
-	return &Voting[T]{
+	return &Voting{
 		path:         path,
 		preferences:  preferences,
 		choicesCount: preferences.Size(),
@@ -64,7 +60,7 @@ func NewVoting[T Type](path string) (*Voting[T], error) {
 
 // AddChoices adds new choices to the voting. It returns the range of the new
 // indexes, with to value as non-inclusive.
-func (v *Voting[T]) AddChoices(count uint64) (from, to uint64, err error) {
+func (v *Voting) AddChoices(count uint64) (from, to uint64, err error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -87,7 +83,7 @@ func (v *Voting[T]) AddChoices(count uint64) (from, to uint64, err error) {
 }
 
 // RemoveChoices marks indexes as no longer available to vote for.
-func (v *Voting[T]) RemoveChoices(indexes ...uint64) error {
+func (v *Voting) RemoveChoices(indexes ...uint64) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -105,7 +101,7 @@ func (v *Voting[T]) RemoveChoices(indexes ...uint64) error {
 // Ballot represents a single vote with ranked choices. Lowest number represents
 // the highest rank. Not all choices have to be ranked and multiple choices can
 // have the same rank. Ranks do not have to be in consecutive order.
-type Ballot[T Type] map[uint64]T
+type Ballot map[uint64]uint32
 
 // Record represents a single vote with ranked choices. Ranks field is a list of
 // Ballot values. The first ballot is the list with the first choices, the
@@ -119,7 +115,7 @@ type Record struct {
 
 // Vote adds a voting preferences by a single voting ballot. A record of a
 // complete and normalized preferences is returned that can be used to unvote.
-func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
+func (v *Voting) Vote(b Ballot) (Record, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -127,7 +123,7 @@ func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 
 	ballotLen := uint64(len(b))
 
-	ballotRanks := make(map[T][]uint64, ballotLen)
+	ballotRanks := make(map[uint32][]uint64, ballotLen)
 
 	for index, rank := range b {
 		matrixIndex, has := v.choicesIndex.Get(index)
@@ -141,7 +137,7 @@ func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 		ballotRanks[rank] = append(ballotRanks[rank], matrixIndex)
 	}
 
-	rankNumbers := make([]T, 0, len(ballotRanks))
+	rankNumbers := make([]uint32, 0, len(ballotRanks))
 	for rank := range ballotRanks {
 		rankNumbers = append(rankNumbers, rank)
 	}
@@ -200,7 +196,7 @@ func (v *Voting[T]) Vote(b Ballot[T]) (Record, error) {
 }
 
 // Unvote removes the vote from the preferences.
-func (v *Voting[T]) Unvote(r Record) error {
+func (v *Voting) Unvote(r Record) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -278,7 +274,7 @@ type Result struct {
 }
 
 // Size returns the number of choices in the voting.
-func (v *Voting[T]) Size() uint64 {
+func (v *Voting) Size() uint64 {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
@@ -289,7 +285,7 @@ func (v *Voting[T]) Size() uint64 {
 // second argument is called for each choice with the Result value. If the function
 // returns false, the iteration is stopped. The order of the results is not
 // sorted by the number of wins.
-func (v *Voting[T]) Compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
+func (v *Voting) Compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
@@ -298,7 +294,7 @@ func (v *Voting[T]) Compute(ctx context.Context, f func(Result) (bool, error)) (
 
 // ComputeSorted calculates a sorted list of choices with the total number of wins for
 // each of them. If there are multiple winners, tie boolean parameter is true.
-func (v *Voting[T]) ComputeSorted(ctx context.Context) (results []Result, tie, stale bool, err error) {
+func (v *Voting) ComputeSorted(ctx context.Context) (results []Result, tie, stale bool, err error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
@@ -326,7 +322,7 @@ func (v *Voting[T]) ComputeSorted(ctx context.Context) (results []Result, tie, s
 	return results, tie, stale, nil
 }
 
-func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
+func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
 	choicesCount := v.choicesCount
 	if choicesCount == 0 {
 		return false, nil
@@ -360,17 +356,7 @@ func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (
 			default:
 			}
 
-			i, has := v.choicesIndex.Get(i)
-			if !has {
-				continue
-			}
-
 			for j := uint64(0); j < choicesCount; j++ {
-
-				j, has := v.choicesIndex.Get(j)
-				if !has {
-					continue
-				}
 
 				if i == j {
 					continue
@@ -384,16 +370,17 @@ func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (
 		}
 
 		for i := uint64(0); i < choicesCount; i++ {
-			i, has := v.choicesIndex.Get(i)
+			_, has := v.choicesIndex.Get(i)
 			if !has {
 				continue
 			}
 
 			for j := uint64(0); j < choicesCount; j++ {
-				j, has := v.choicesIndex.Get(j)
-				if !has {
-					continue
-				}
+				// check is not needed, avoid the condition call for performance
+				// has := v.choicesIndex.Has(j)
+				// if !has {
+				// 	continue
+				// }
 
 				if i == j {
 					continue
@@ -405,23 +392,22 @@ func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (
 				}
 				ji := v.strengths.Get(j, i)
 				for k := uint64(0); k < choicesCount; k++ {
-					k, has := v.choicesIndex.Get(k)
-					if !has {
-						continue
-					}
+					// check is not needed, avoid the condition call for performance
+					// has := v.choicesIndex.Has(k)
+					// if !has {
+					// 	continue
+					// }
 
-					if i == k || j == k {
-						continue
-					}
+					// check is not needed, avoid the condition call for performance
+					// if i == k || j == k {
+					// 	continue
+					// }
 					jk := v.strengths.Get(j, k)
-					m := max(
-						jk,
-						min(
-							ji,
-							v.strengths.Get(i, k),
-						),
+					m := min(
+						ji,
+						v.strengths.Get(i, k),
 					)
-					if m != jk {
+					if m > jk {
 						v.strengths.Set(j, k, m)
 					}
 				}
@@ -482,7 +468,7 @@ func (v *Voting[T]) compute(ctx context.Context, f func(Result) (bool, error)) (
 }
 
 // Close closes the voting. It is not safe to use the voting after it is closed.
-func (v *Voting[T]) Close() error {
+func (v *Voting) Close() error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
@@ -504,9 +490,9 @@ func (v *Voting[T]) Close() error {
 	return nil
 }
 
-func (v *Voting[T]) prepareStrengthsMatrix() error {
+func (v *Voting) prepareStrengthsMatrix() error {
 	if v.strengths == nil || v.strengths.Sync() != nil {
-		strengths, err := matrix.New[T](v.strengthsMatrixFilename())
+		strengths, err := matrix.New(v.strengthsMatrixFilename())
 		if err != nil {
 			return fmt.Errorf("open: %w", err)
 		}
@@ -522,19 +508,12 @@ func (v *Voting[T]) prepareStrengthsMatrix() error {
 	return nil
 }
 
-func (v *Voting[T]) strengthsMatrixFilename() string {
+func (v *Voting) strengthsMatrixFilename() string {
 	return filepath.Join(v.path, "strengths.matrix")
 }
 
-func min[T Type](a, b T) T {
+func min(a, b uint32) uint32 {
 	if a < b {
-		return a
-	}
-	return b
-}
-
-func max[T Type](a, b T) T {
-	if a > b {
 		return a
 	}
 	return b

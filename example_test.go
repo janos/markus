@@ -22,7 +22,7 @@ func ExampleVoting() {
 	defer os.RemoveAll(dir)
 
 	// Create a new voting.
-	v, err := markus.NewVoting[uint64](dir)
+	v, err := markus.NewVoting(dir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func ExampleVoting() {
 	}
 
 	// First vote.
-	record1, err := v.Vote(markus.Ballot[uint64]{
+	record1, err := v.Vote(markus.Ballot{
 		0: 1,
 		2: 2,
 	})
@@ -43,7 +43,7 @@ func ExampleVoting() {
 	}
 
 	// Second vote.
-	if _, err := v.Vote(markus.Ballot[uint64]{
+	if _, err := v.Vote(markus.Ballot{
 		1: 1,
 		2: 2,
 	}); err != nil {
@@ -54,7 +54,7 @@ func ExampleVoting() {
 	if err := v.Unvote(record1); err != nil {
 		log.Fatal(err)
 	}
-	if _, err := v.Vote(markus.Ballot[uint64]{
+	if _, err := v.Vote(markus.Ballot{
 		0: 1,
 		1: 2,
 	}); err != nil {

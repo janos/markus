@@ -21,14 +21,14 @@ import (
 
 func TestVoting(t *testing.T) {
 
-	type ballot[T markus.Type] struct {
-		vote   markus.Ballot[T]
+	type ballot struct {
+		vote   markus.Ballot
 		unvote markus.Record
 	}
 	for _, tc := range []struct {
 		name         string
 		choicesCount uint64
-		ballots      []ballot[uint16]
+		ballots      []ballot
 		result       []markus.Result
 		tie          bool
 	}{
@@ -46,8 +46,8 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "single option one vote",
 			choicesCount: 1,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
@@ -56,8 +56,8 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "two options one vote",
 			choicesCount: 2,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 1, Strength: 1, Advantage: 1},
@@ -67,9 +67,9 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "two options two votes",
 			choicesCount: 2,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 2}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
+				{vote: markus.Ballot{0: 1, 1: 2}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 1, Strength: 2, Advantage: 2},
@@ -78,10 +78,10 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "three options three votes",
 			choicesCount: 3,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 2}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 2, 2: 3}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
+				{vote: markus.Ballot{0: 1, 1: 2}},
+				{vote: markus.Ballot{0: 1, 1: 2, 2: 3}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 2, Strength: 6, Advantage: 6},
@@ -92,9 +92,9 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "tie",
 			choicesCount: 3,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
-				{vote: markus.Ballot[uint16]{1: 1}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
+				{vote: markus.Ballot{1: 1}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 1, Strength: 1, Advantage: 1},
@@ -106,11 +106,11 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "complex",
 			choicesCount: 5,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1, 1: 1}},
-				{vote: markus.Ballot[uint16]{1: 1, 2: 1, 0: 2}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 2, 2: 2}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 200, 2: 10}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1, 1: 1}},
+				{vote: markus.Ballot{1: 1, 2: 1, 0: 2}},
+				{vote: markus.Ballot{0: 1, 1: 2, 2: 2}},
+				{vote: markus.Ballot{0: 1, 1: 200, 2: 10}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 4, Strength: 13, Advantage: 13},
@@ -123,59 +123,59 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "example from wiki page",
 			choicesCount: 5,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
+				{vote: markus.Ballot{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
+				{vote: markus.Ballot{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
+				{vote: markus.Ballot{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
+				{vote: markus.Ballot{0: 1, 2: 2, 1: 3, 4: 4, 3: 5}},
 
-				{vote: markus.Ballot[uint16]{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
-				{vote: markus.Ballot[uint16]{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
+				{vote: markus.Ballot{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
+				{vote: markus.Ballot{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
+				{vote: markus.Ballot{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
+				{vote: markus.Ballot{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
+				{vote: markus.Ballot{0: 1, 3: 2, 4: 3, 2: 4, 1: 5}},
 
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
+				{vote: markus.Ballot{1: 1, 4: 2, 3: 3, 0: 4, 2: 5}},
 
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 1: 3, 4: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 1: 3, 4: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 1: 3, 4: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 1: 3, 4: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 1: 3, 4: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 1: 3, 4: 4, 3: 5}},
 
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
+				{vote: markus.Ballot{2: 1, 0: 2, 4: 3, 1: 4, 3: 5}},
 
-				{vote: markus.Ballot[uint16]{2: 1, 1: 2, 0: 3, 3: 4, 4: 5}},
-				{vote: markus.Ballot[uint16]{2: 1, 1: 2, 0: 3, 3: 4, 4: 5}},
+				{vote: markus.Ballot{2: 1, 1: 2, 0: 3, 3: 4, 4: 5}},
+				{vote: markus.Ballot{2: 1, 1: 2, 0: 3, 3: 4, 4: 5}},
 
-				{vote: markus.Ballot[uint16]{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
-				{vote: markus.Ballot[uint16]{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
-				{vote: markus.Ballot[uint16]{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
-				{vote: markus.Ballot[uint16]{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
-				{vote: markus.Ballot[uint16]{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
-				{vote: markus.Ballot[uint16]{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
-				{vote: markus.Ballot[uint16]{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
+				{vote: markus.Ballot{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
+				{vote: markus.Ballot{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
+				{vote: markus.Ballot{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
+				{vote: markus.Ballot{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
+				{vote: markus.Ballot{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
+				{vote: markus.Ballot{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
+				{vote: markus.Ballot{3: 1, 2: 2, 4: 3, 1: 4, 0: 5}},
 
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
-				{vote: markus.Ballot[uint16]{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
+				{vote: markus.Ballot{4: 1, 1: 2, 0: 3, 3: 4, 2: 5}},
 			},
 			result: []markus.Result{
 				{Index: 4, Wins: 4, Strength: 112, Advantage: 16},
@@ -188,8 +188,8 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "unvote single option one vote",
 			choicesCount: 1,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
 				{unvote: markus.Record{
 					Ranks: [][]uint64{{0}},
 					Size:  2,
@@ -202,8 +202,8 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "unvote two options one vote",
 			choicesCount: 2,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
 				{unvote: markus.Record{
 					Ranks: [][]uint64{{0}},
 					Size:  2,
@@ -218,11 +218,11 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "unvote complex",
 			choicesCount: 5,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1, 1: 1}},
-				{vote: markus.Ballot[uint16]{1: 1, 2: 1, 0: 2}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 2, 2: 2}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 200, 2: 10}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1, 1: 1}},
+				{vote: markus.Ballot{1: 1, 2: 1, 0: 2}},
+				{vote: markus.Ballot{0: 1, 1: 2, 2: 2}},
+				{vote: markus.Ballot{0: 1, 1: 200, 2: 10}},
 				{unvote: markus.Record{
 					Ranks: [][]uint64{{0}, {1, 2}},
 					Size:  5,
@@ -239,15 +239,15 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "multiple unvote complex",
 			choicesCount: 5,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1, 1: 1}},
-				{vote: markus.Ballot[uint16]{1: 1, 2: 1, 0: 2}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 2, 2: 2}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1, 1: 1}},
+				{vote: markus.Ballot{1: 1, 2: 1, 0: 2}},
+				{vote: markus.Ballot{0: 1, 1: 2, 2: 2}},
 				{unvote: markus.Record{
 					Ranks: [][]uint64{{0, 1}},
 					Size:  5,
 				}},
-				{vote: markus.Ballot[uint16]{0: 1, 1: 200, 2: 10}},
+				{vote: markus.Ballot{0: 1, 1: 200, 2: 10}},
 				{unvote: markus.Record{
 					Ranks: [][]uint64{{0}, {1, 2}},
 					Size:  5,
@@ -268,18 +268,18 @@ func TestVoting(t *testing.T) {
 		{
 			name:         "multiple unvote cancel compete vote",
 			choicesCount: 2,
-			ballots: []ballot[uint16]{
-				{vote: markus.Ballot[uint16]{0: 1}},
+			ballots: []ballot{
+				{vote: markus.Ballot{0: 1}},
 				{unvote: markus.Record{
 					Ranks: [][]uint64{{0}},
 					Size:  2,
 				}},
-				{vote: markus.Ballot[uint16]{1: 1, 0: 2}},
+				{vote: markus.Ballot{1: 1, 0: 2}},
 				{unvote: markus.Record{
 					Ranks: [][]uint64{{1}, {0}},
 					Size:  2,
 				}},
-				{vote: markus.Ballot[uint16]{1: 1}},
+				{vote: markus.Ballot{1: 1}},
 			},
 			result: []markus.Result{
 				{Index: 1, Wins: 1, Strength: 1, Advantage: 1},
@@ -289,7 +289,7 @@ func TestVoting(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Run("Compute", func(t *testing.T) {
-				v := newMarkusVoting[uint16](t)
+				v := newMarkusVoting(t)
 
 				if _, _, err := v.AddChoices(tc.choicesCount); err != nil {
 					t.Fatal(err)
@@ -327,7 +327,7 @@ func TestVoting(t *testing.T) {
 				assertEqual(t, "result", results, tc.result)
 			})
 			t.Run("ComputeSorted", func(t *testing.T) {
-				v := newMarkusVoting[uint16](t)
+				v := newMarkusVoting(t)
 
 				if _, _, err := v.AddChoices(tc.choicesCount); err != nil {
 					t.Fatal(err)
@@ -358,13 +358,13 @@ func TestVoting(t *testing.T) {
 }
 
 func TestVoting_Unvote_afterAddChoices(t *testing.T) {
-	v := newMarkusVoting[uint64](t)
+	v := newMarkusVoting(t)
 
 	if _, _, err := v.AddChoices(3); err != nil {
 		t.Fatal(err)
 	}
 
-	ballot := markus.Ballot[uint64]{0: 1, 1: 2}
+	ballot := markus.Ballot{0: 1, 1: 2}
 	record, err := v.Vote(ballot)
 	if err != nil {
 		t.Fatal(err)
@@ -406,13 +406,13 @@ func TestVoting_Unvote_afterAddChoices(t *testing.T) {
 }
 
 func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
-	v := newMarkusVoting[uint64](t)
+	v := newMarkusVoting(t)
 
 	if _, _, err := v.AddChoices(8); err != nil {
 		t.Fatal(err)
 	}
 
-	ballot := markus.Ballot[uint64]{0: 1, 1: 2, 4: 3, 7: 4}
+	ballot := markus.Ballot{0: 1, 1: 2, 4: 3, 7: 4}
 	record, err := v.Vote(ballot)
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +458,7 @@ func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
 	assertEqual(t, "tie", tie, true)
 	assertEqual(t, "stale", stale, false)
 
-	if _, err := v.Vote(markus.Ballot[uint64]{3: 1, 7: 2}); err != nil {
+	if _, err := v.Vote(markus.Ballot{3: 1, 7: 2}); err != nil {
 		t.Fatal(err)
 	}
 	gotResults, tie, stale, err = v.ComputeSorted(context.Background())
@@ -479,7 +479,7 @@ func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
 
 func TestVoting_persistance(t *testing.T) {
 	dir := t.TempDir()
-	v, err := markus.NewVoting[uint16](dir)
+	v, err := markus.NewVoting(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,14 +489,14 @@ func TestVoting_persistance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := v.Vote(markus.Ballot[uint16]{
+	if _, err := v.Vote(markus.Ballot{
 		3: 1,
 		1: 5,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := v.Vote(markus.Ballot[uint16]{
+	if _, err := v.Vote(markus.Ballot{
 		2: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -526,7 +526,7 @@ func TestVoting_persistance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v2, err := markus.NewVoting[uint16](dir)
+	v2, err := markus.NewVoting(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +542,7 @@ func TestVoting_persistance(t *testing.T) {
 }
 
 func TestVoting_concurrency(t *testing.T) {
-	v := newMarkusVoting[uint64](t)
+	v := newMarkusVoting(t)
 
 	votingLog := make([]any, 0)
 	votingLogMu := new(sync.Mutex)
@@ -624,9 +624,9 @@ func TestVoting_concurrency(t *testing.T) {
 				votingLog = append(votingLog, count)
 			}()
 
-			ballot := make(markus.Ballot[uint64])
+			ballot := make(markus.Ballot)
 			for _, c := range choices {
-				ballot[c] = rand.Uint64() % uint64(len(choices)+1)
+				ballot[c] = rand.Uint32() % uint32(len(choices)+1)
 			}
 
 			func() {
@@ -676,7 +676,7 @@ func TestVoting_concurrency(t *testing.T) {
 	}
 	assertEqual(t, "staled", gotStaled, false)
 
-	validation := newMarkusVoting[uint64](t)
+	validation := newMarkusVoting(t)
 
 	for _, m := range votingLog {
 		switch m := m.(type) {
@@ -684,7 +684,7 @@ func TestVoting_concurrency(t *testing.T) {
 			if _, _, err := validation.AddChoices(m); err != nil {
 				t.Fatal(err)
 			}
-		case markus.Ballot[uint64]:
+		case markus.Ballot:
 			if _, err := validation.Vote(m); err != nil {
 				t.Fatal(err)
 			}
@@ -706,7 +706,7 @@ func TestVoting_concurrency(t *testing.T) {
 func TestVoting_strengthsMatrixPreparation(t *testing.T) {
 	dir := t.TempDir()
 
-	v, err := markus.NewVoting[uint64](dir)
+	v, err := markus.NewVoting(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -724,7 +724,7 @@ func TestVoting_strengthsMatrixPreparation(t *testing.T) {
 	}
 
 	for i := 0; i < 20; i++ {
-		ballot := make(markus.Ballot[uint64])
+		ballot := make(markus.Ballot)
 		ballot[rand.Uint64()%choicesCount] = 1
 		ballot[rand.Uint64()%choicesCount] = 1
 		ballot[rand.Uint64()%choicesCount] = 2
@@ -762,7 +762,7 @@ func TestVoting_strengthsMatrixPreparation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	v2, err := markus.NewVoting[uint64](dir)
+	v2, err := markus.NewVoting(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -788,7 +788,7 @@ func BenchmarkVoting_ComputeSorted(b *testing.B) {
 
 	const choicesCount = 1000
 
-	v := newMarkusVoting[uint64](b)
+	v := newMarkusVoting(b)
 
 	b.Log("adding choices...")
 	if _, _, err := v.AddChoices(choicesCount); err != nil {
@@ -797,7 +797,7 @@ func BenchmarkVoting_ComputeSorted(b *testing.B) {
 
 	b.Log("voting...")
 	for i := 0; i < 20; i++ {
-		ballot := make(markus.Ballot[uint64])
+		ballot := make(markus.Ballot)
 		ballot[rand.Uint64()%choicesCount] = 1
 		ballot[rand.Uint64()%choicesCount] = 1
 		ballot[rand.Uint64()%choicesCount] = 2
@@ -824,7 +824,7 @@ func BenchmarkVoting_Vote(b *testing.B) {
 
 	const choicesCount = 100
 
-	v := newMarkusVoting[uint64](b)
+	v := newMarkusVoting(b)
 
 	b.Log("adding choices...")
 	if _, _, err := v.AddChoices(choicesCount); err != nil {
@@ -834,7 +834,7 @@ func BenchmarkVoting_Vote(b *testing.B) {
 	b.ResetTimer()
 
 	for n := 0; n < b.N; n++ {
-		if _, err := v.Vote(markus.Ballot[uint64]{
+		if _, err := v.Vote(markus.Ballot{
 			choicesCount / 2: 1,
 		}); err != nil {
 			b.Fatal(err)
@@ -861,12 +861,12 @@ func avgDuration(durations []time.Duration) time.Duration {
 	return sum / time.Duration(len(durations))
 }
 
-func newMarkusVoting[T markus.Type](t testing.TB) *markus.Voting[T] {
+func newMarkusVoting(t testing.TB) *markus.Voting {
 	t.Helper()
 
 	dir := t.TempDir()
 
-	v, err := markus.NewVoting[T](dir)
+	v, err := markus.NewVoting(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
