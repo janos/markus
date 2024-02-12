@@ -6,68 +6,76 @@
 package indexmap
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
 )
 
 type Map struct {
-	path  string
-	free  []uint64
-	index map[uint64]*uint64
+	path    string
+	choices []uint64
+	index   map[uint64]uint64
+	free    []uint64
+	cursor  uint64
 }
 
 func New(path string) (*Map, error) {
 	m := &Map{
-		path:  path,
-		index: make(map[uint64]*uint64),
-		free:  make([]uint64, 0),
+		path:    path,
+		choices: make([]uint64, 0),       // physical -> virtual
+		index:   make(map[uint64]uint64), // virtual -> physical
+		free:    make([]uint64, 0),
 	}
 	return m, m.read()
 }
 
-func (m *Map) Get(index uint64) (realIndex uint64, has bool) {
-	replacement, ok := m.index[index]
-	if !ok {
-		return index, true
-	}
-	if replacement == nil {
-		return index, false // removed
-	}
-	return *replacement, true
+func (m *Map) GetPhysical(index uint64) (physicalIndex uint64, has bool) {
+	physicalIndex, ok := m.index[index]
+	return physicalIndex, ok
 }
 
-func (m *Map) Add(index uint64) {
+func (m *Map) GetVirtual(physicalIndex uint64) (index uint64, has bool) {
+	if physicalIndex >= uint64(len(m.choices)) {
+		return 0, false
+	}
+	for _, f := range m.free {
+		if f == physicalIndex {
+			return 0, false
+		}
+	}
+	return m.choices[physicalIndex], true
+}
+
+func (m *Map) Add() (physical, virtual uint64) {
+	defer func() { m.cursor++ }()
+
+	newVirtual := m.cursor
+
 	if len(m.free) == 0 {
-		return
+		m.choices = append(m.choices, newVirtual)
+		physical = uint64(len(m.choices) - 1)
+		m.index[newVirtual] = uint64(len(m.choices) - 1)
+		return physical, newVirtual
 	}
 
-	replacement, ok := m.index[index]
-	if ok && replacement != nil {
-		return // exists replaced
-	}
-	free := m.free[0]
-	if free == index {
-		m.free = m.free[1:]
-		delete(m.index, index)
-		return
-	}
+	physical = m.free[0]
 	m.free = m.free[1:]
-	m.index[index] = &free
+	m.choices[physical] = newVirtual
+	m.index[newVirtual] = physical
+
+	return physical, newVirtual
 }
 
 func (m *Map) Remove(index uint64) {
-	replacement, ok := m.index[index]
+	location, ok := m.index[index]
 	if !ok {
-		m.index[index] = nil
-		m.free = append(m.free, index)
+		return
 	}
-	if replacement != nil {
-		m.index[*replacement] = nil
-		m.free = append(m.free, *replacement)
-		delete(m.index, index)
-	}
+
+	m.free = append(m.free, location)
+	delete(m.index, index)
+
 	sort.Slice(m.free, func(i, j int) bool {
 		return m.free[i] < m.free[j]
 	})
@@ -77,63 +85,44 @@ func (m *Map) FreeCount() int {
 	return len(m.free)
 }
 
+func (m *Map) Cursor() uint64 {
+	return m.cursor
+}
+
+type store struct {
+	Choices []uint64 `json:"choices,omitempty"`
+	Free    []uint64 `json:"free,omitempty"`
+	Cursor  uint64   `json:"cursor,omitempty"`
+}
+
 func (m *Map) read() error {
-	f, err := os.OpenFile(m.path, os.O_RDONLY|os.O_CREATE, 0666)
+	f, err := os.OpenFile(m.path, os.O_RDONLY, 0666)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("open file: %w", err)
 	}
 	defer f.Close()
 
-	m.free = m.free[:0]
-	for k := range m.index {
-		delete(m.index, k)
+	var s store
+	if err := json.NewDecoder(f).Decode(&s); err != nil {
+		return err
 	}
 
-	s := bufio.NewScanner(f)
-	s.Split(bufio.ScanLines)
-	for s.Scan() {
-		text := s.Text()
-		if text == "# replaced" || text == "# free" || text == "# removed" {
-			break
+	m.choices = s.Choices
+	m.free = s.Free
+	m.index = make(map[uint64]uint64)
+	m.cursor = s.Cursor
+
+Loop:
+	for location, index := range m.choices {
+		for _, f := range m.free {
+			if f == uint64(location) {
+				continue Loop
+			}
 		}
-	}
-	for s.Scan() {
-		text := s.Text()
-		if text == "# free" || text == "# removed" {
-			break
-		}
-		var index uint64
-		var replacement uint64
-		if _, err := fmt.Sscan(text, &index, &replacement); err != nil {
-			m.index = nil
-			m.free = nil
-			return fmt.Errorf("scan replaced index: %w", err)
-		}
-		m.index[index] = &replacement
-	}
-	for s.Scan() {
-		text := s.Text()
-		if text == "# free" {
-			break
-		}
-		var index uint64
-		if _, err := fmt.Sscan(text, &index); err != nil {
-			m.index = nil
-			m.free = nil
-			return fmt.Errorf("scan replaced index: %w", err)
-		}
-		m.index[index] = nil
-	}
-	for s.Scan() {
-		text := s.Text()
-		var index uint64
-		if _, err := fmt.Sscan(text, &index); err != nil {
-			m.index = nil
-			m.free = nil
-			return fmt.Errorf("scan free index: %w", err)
-		}
-		m.free = append(m.free, index)
-		m.index[index] = nil
+		m.index[index] = uint64(location)
 	}
 
 	return nil
@@ -146,41 +135,9 @@ func (m *Map) Write() error {
 	}
 	defer f.Close()
 
-	if _, err := f.WriteString("# replaced\n"); err != nil {
-		return fmt.Errorf("write removed header: %w", err)
-	}
-
-	for index, replacement := range m.index {
-		if replacement == nil {
-			continue
-		}
-		if _, err := f.WriteString(fmt.Sprintf("%v %v\n", index, *replacement)); err != nil {
-			return fmt.Errorf("write replaced index: %w", err)
-		}
-	}
-
-	if _, err := f.WriteString("# removed\n"); err != nil {
-		return fmt.Errorf("write removed header: %w", err)
-	}
-
-	for index, replacement := range m.index {
-		if replacement != nil {
-			continue
-		}
-		if _, err := f.WriteString(fmt.Sprintf("%v\n", index)); err != nil {
-			return fmt.Errorf("write replaced index: %w", err)
-		}
-	}
-
-	if _, err := f.WriteString("# free\n"); err != nil {
-		return fmt.Errorf("write free header: %w", err)
-	}
-
-	for _, index := range m.free {
-		if _, err := f.WriteString(fmt.Sprintf("%v\n", index)); err != nil {
-			return fmt.Errorf("write free index: %w", err)
-		}
-	}
-
-	return nil
+	return json.NewEncoder(f).Encode(store{
+		Choices: m.choices,
+		Free:    m.free,
+		Cursor:  m.cursor,
+	})
 }

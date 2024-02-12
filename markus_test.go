@@ -6,18 +6,25 @@
 package markus_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"reflect"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"resenje.org/markus"
 )
+
+var verbose = strings.ToLower(os.Getenv("VERBOSE")) == "true"
 
 func TestVoting(t *testing.T) {
 
@@ -190,10 +197,7 @@ func TestVoting(t *testing.T) {
 			choicesCount: 1,
 			ballots: []ballot{
 				{vote: markus.Ballot{0: 1}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{0}},
-					Size:  2,
-				}},
+				{unvote: [][]uint64{{0}}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
@@ -204,10 +208,7 @@ func TestVoting(t *testing.T) {
 			choicesCount: 2,
 			ballots: []ballot{
 				{vote: markus.Ballot{0: 1}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{0}},
-					Size:  2,
-				}},
+				{unvote: [][]uint64{{0}, {1}}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
@@ -223,10 +224,7 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot{1: 1, 2: 1, 0: 2}},
 				{vote: markus.Ballot{0: 1, 1: 2, 2: 2}},
 				{vote: markus.Ballot{0: 1, 1: 200, 2: 10}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{0}, {1, 2}},
-					Size:  5,
-				}},
+				{unvote: [][]uint64{{0}, {1, 2}, {3, 4}}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 3, Strength: 8, Advantage: 8},
@@ -243,19 +241,10 @@ func TestVoting(t *testing.T) {
 				{vote: markus.Ballot{0: 1, 1: 1}},
 				{vote: markus.Ballot{1: 1, 2: 1, 0: 2}},
 				{vote: markus.Ballot{0: 1, 1: 2, 2: 2}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{0, 1}},
-					Size:  5,
-				}},
+				{unvote: [][]uint64{{0, 1}, {2, 3, 4}}},
 				{vote: markus.Ballot{0: 1, 1: 200, 2: 10}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{0}, {1, 2}},
-					Size:  5,
-				}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{1, 2}, {0}},
-					Size:  5,
-				}},
+				{unvote: [][]uint64{{0}, {1, 2}, {3, 4}}},
+				{unvote: [][]uint64{{1, 2}, {0}, {3, 4}}},
 			},
 			result: []markus.Result{
 				{Index: 0, Wins: 4, Strength: 4, Advantage: 4},
@@ -270,15 +259,9 @@ func TestVoting(t *testing.T) {
 			choicesCount: 2,
 			ballots: []ballot{
 				{vote: markus.Ballot{0: 1}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{0}},
-					Size:  2,
-				}},
+				{unvote: [][]uint64{{0}, {1}}},
 				{vote: markus.Ballot{1: 1, 0: 2}},
-				{unvote: markus.Record{
-					Ranks: [][]uint64{{1}, {0}},
-					Size:  2,
-				}},
+				{unvote: [][]uint64{{1}, {0}, {}}},
 				{vote: markus.Ballot{1: 1}},
 			},
 			result: []markus.Result{
@@ -296,7 +279,7 @@ func TestVoting(t *testing.T) {
 				}
 
 				for _, b := range tc.ballots {
-					if b.unvote.Size > 0 {
+					if len(b.unvote) > 0 {
 						if err := v.Unvote(b.unvote); err != nil {
 							t.Fatal(err)
 						}
@@ -337,7 +320,7 @@ func TestVoting(t *testing.T) {
 				}
 
 				for _, b := range tc.ballots {
-					if b.unvote.Size > 0 {
+					if len(b.unvote) > 0 {
 						if err := v.Unvote(b.unvote); err != nil {
 							t.Fatal(err)
 						}
@@ -361,123 +344,133 @@ func TestVoting(t *testing.T) {
 }
 
 func TestVoting_Unvote_afterAddChoices(t *testing.T) {
-	v := newMarkusVoting(t)
+	t.Run("with unvoted", func(t *testing.T) {
+		v := newMarkusVoting(t)
+		if _, _, err := v.AddChoices(3); err != nil {
+			t.Fatal(err)
+		}
 
-	if _, _, err := v.AddChoices(3); err != nil {
-		t.Fatal(err)
-	}
+		validationVoting := newMarkusVoting(t)
+		if _, _, err := validationVoting.AddChoices(3); err != nil {
+			t.Fatal(err)
+		}
 
-	ballot := markus.Ballot{0: 1, 1: 2}
-	record, err := v.Vote(ballot)
-	if err != nil {
-		t.Fatal(err)
-	}
+		ballot := markus.Ballot{0: 1, 1: 2}
+		record, err := v.Vote(ballot)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if _, _, err := v.AddChoices(1); err != nil {
-		t.Fatal(err)
-	}
+		if _, _, err := v.AddChoices(1); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := validationVoting.AddChoices(1); err != nil {
+			t.Fatal(err)
+		}
 
-	gotResults, tie, stale, err := v.ComputeSorted(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 2, Strength: 2, Advantage: 2},
-		{Index: 1, Wins: 1, Strength: 1, Advantage: 1},
-		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+		if err := v.Unvote(record); err != nil {
+			t.Fatal(err)
+		}
+
+		assertPreferences(t, v, validationVoting)
 	})
-	assertEqual(t, "tie", tie, false)
-	assertEqual(t, "stale", stale, false)
 
-	if err := v.Unvote(record); err != nil {
-		t.Fatal(err)
-	}
+	t.Run("without unvoted", func(t *testing.T) {
+		v := newMarkusVoting(t)
+		if _, _, err := v.AddChoices(3); err != nil {
+			t.Fatal(err)
+		}
 
-	gotResults, tie, stale, err = v.ComputeSorted(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+		validationVoting := newMarkusVoting(t)
+		if _, _, err := validationVoting.AddChoices(3); err != nil {
+			t.Fatal(err)
+		}
+
+		ballot := markus.Ballot{0: 1, 1: 2, 2: 1}
+		record, err := v.Vote(ballot)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if _, _, err := v.AddChoices(1); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := validationVoting.AddChoices(1); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := v.Unvote(record); err != nil {
+			t.Fatal(err)
+		}
+
+		assertPreferences(t, v, validationVoting)
 	})
-	assertEqual(t, "tie", tie, true)
-	assertEqual(t, "stale", stale, false)
 }
 
 func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
-	v := newMarkusVoting(t)
+	t.Run("with unvoted", func(t *testing.T) {
+		v := newMarkusVoting(t)
+		if _, _, err := v.AddChoices(8); err != nil {
+			t.Fatal(err)
+		}
 
-	if _, _, err := v.AddChoices(8); err != nil {
-		t.Fatal(err)
-	}
+		validationVoting := newMarkusVoting(t)
+		if _, _, err := validationVoting.AddChoices(8); err != nil {
+			t.Fatal(err)
+		}
 
-	ballot := markus.Ballot{0: 1, 1: 2, 4: 3, 7: 4}
-	record, err := v.Vote(ballot)
-	if err != nil {
-		t.Fatal(err)
-	}
+		ballot := markus.Ballot{0: 1, 1: 2, 4: 3, 7: 4}
+		record, err := v.Vote(ballot)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	gotResults, tie, stale, err := v.ComputeSorted(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 7, Strength: 7, Advantage: 7},
-		{Index: 1, Wins: 6, Strength: 6, Advantage: 6},
-		{Index: 4, Wins: 5, Strength: 5, Advantage: 5},
-		{Index: 7, Wins: 4, Strength: 4, Advantage: 4},
-		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 5, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 6, Wins: 0, Strength: 0, Advantage: 0},
+		if err := validationVoting.RemoveChoices(4, 5); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := v.RemoveChoices(4, 5); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := v.Unvote(record); err != nil {
+			t.Fatal(err)
+		}
+
+		assertPreferences(t, v, validationVoting)
 	})
-	assertEqual(t, "tie", tie, false)
-	assertEqual(t, "stale", stale, false)
 
-	if err := v.RemoveChoices(4, 5); err != nil {
-		t.Fatal(err)
-	}
+	t.Run("without unvoted", func(t *testing.T) {
+		v := newMarkusVoting(t)
+		if _, _, err := v.AddChoices(8); err != nil {
+			t.Fatal(err)
+		}
 
-	if err := v.Unvote(record); err != nil {
-		t.Fatal(err)
-	}
+		validationVoting := newMarkusVoting(t)
+		if _, _, err := validationVoting.AddChoices(8); err != nil {
+			t.Fatal(err)
+		}
 
-	gotResults, tie, stale, err = v.ComputeSorted(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 6, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 7, Wins: 0, Strength: 0, Advantage: 0},
+		ballot := markus.Ballot{0: 1, 1: 2, 3: 1, 4: 3, 5: 2, 6: 2, 7: 4}
+		record, err := v.Vote(ballot)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if err := validationVoting.RemoveChoices(4, 5); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := v.RemoveChoices(4, 5); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := v.Unvote(record); err != nil {
+			t.Fatal(err)
+		}
+
+		assertPreferences(t, v, validationVoting)
 	})
-	assertEqual(t, "tie", tie, true)
-	assertEqual(t, "stale", stale, false)
-
-	if _, err := v.Vote(markus.Ballot{3: 1, 7: 2}); err != nil {
-		t.Fatal(err)
-	}
-	gotResults, tie, stale, err = v.ComputeSorted(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	assertEqual(t, "gotResults", gotResults, []markus.Result{
-		{Index: 3, Wins: 5, Strength: 5, Advantage: 5},
-		{Index: 7, Wins: 4, Strength: 4, Advantage: 4},
-		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
-		{Index: 6, Wins: 0, Strength: 0, Advantage: 0},
-	})
-	assertEqual(t, "tie", tie, false)
-	assertEqual(t, "stale", stale, false)
 }
 
 func TestVoting_persistance(t *testing.T) {
@@ -544,17 +537,76 @@ func TestVoting_persistance(t *testing.T) {
 	assertEqual(t, "staled", staled, wantStaled)
 }
 
+func TestVoting_addVoteAndUnvote(t *testing.T) {
+	v, err := markus.NewVoting(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+
+	_, _, err = v.AddChoices(1)
+	assertEqual(t, "error", err, nil)
+	_, err = v.Vote(markus.Ballot{
+		0: 1,
+	})
+	assertEqual(t, "error", err, nil)
+
+	_, _, err = v.AddChoices(1)
+	assertEqual(t, "error", err, nil)
+	r2, err := v.Vote(markus.Ballot{
+		1: 1,
+	})
+	assertEqual(t, "error", err, nil)
+
+	_, _, err = v.AddChoices(1)
+	assertEqual(t, "error", err, nil)
+	_, err = v.Vote(markus.Ballot{
+		2: 1,
+	})
+	assertEqual(t, "error", err, nil)
+
+	err = v.Unvote(r2)
+	assertEqual(t, "error", err, nil)
+	_, err = v.Vote(markus.Ballot{
+		1: 1,
+	})
+	assertEqual(t, "error", err, nil)
+
+	_, _, err = v.AddChoices(1)
+	assertEqual(t, "error", err, nil)
+	_, err = v.Vote(markus.Ballot{
+		3: 1,
+	})
+	assertEqual(t, "error", err, nil)
+
+	results, tie, staled, err := v.ComputeSorted(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantResults := []markus.Result{
+		{Index: 0, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 1, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 2, Wins: 0, Strength: 0, Advantage: 0},
+		{Index: 3, Wins: 0, Strength: 0, Advantage: 0},
+	}
+	assertEqual(t, "results", results, wantResults)
+	wantTie := true
+	assertEqual(t, "tie", tie, wantTie)
+	wantStaled := false
+	assertEqual(t, "staled", staled, wantStaled)
+}
+
 func TestVoting_concurrency(t *testing.T) {
 	v := newMarkusVoting(t)
 
+	mu := new(sync.Mutex)
 	votingLog := make([]any, 0)
-	votingLogMu := new(sync.Mutex)
+	recordsToRemove := make([]markus.Record, 0)
 
 	var (
-		concurrency          = runtime.NumCPU()*2 + 1
-		iterations           = 100
-		choicesCount  uint64 = 100
-		maxBallotSize        = 25
+		concurrency         = runtime.NumCPU()*2 + 1
+		iterations          = 100
+		choicesCount uint64 = 10
 	)
 
 	t.Log("concurrency:", concurrency)
@@ -586,66 +638,123 @@ func TestVoting_concurrency(t *testing.T) {
 			computeTimes = computeTimes[:0]
 			computeTimesMu.Unlock()
 		}
+
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			votingLogMu.Lock()
-			defer votingLogMu.Unlock()
+			mu.Lock()
+			defer mu.Unlock()
 
-			choices := make([]uint64, rand.Intn(rand.Intn(maxBallotSize)+1)+1)
+			size := v.Size()
 
-			var maxChoice uint64
-			for i := range choices {
-				c := rand.Uint64() % choicesCount
-				choices[i] = c
-				if c > maxChoice {
-					maxChoice = c
+			count := rand.Uint64() % choicesCount
+			if count <= 0 {
+				return
+			}
+
+			start := time.Now()
+			if _, _, err := v.AddChoices(count); err != nil {
+				t.Error(err)
+			}
+			if size > 0 {
+				addTimesMu.Lock()
+				addTimes = append(addTimes, time.Since(start)/time.Duration(size))
+				addTimesMu.Unlock()
+			}
+
+			votingLog = append(votingLog, count)
+		}()
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			choices := v.Choices()
+
+			if len(choices) == 0 {
+				return
+			}
+
+			toRemove := make([]uint64, rand.Intn(3))
+			for i := range toRemove {
+				toRemove[i] = choices[rand.Intn(len(choices))]
+			}
+
+			if err := v.RemoveChoices(toRemove...); err != nil {
+				t.Error(err)
+			}
+
+			votingLog = append(votingLog, toRemove)
+		}()
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			ballot := make(markus.Ballot)
+			for _, c := range v.Choices() {
+				if rand.Uint32()%2 == 0 {
+					continue
 				}
+				ballot[c] = rand.Uint32() % 10
 			}
 
 			size := v.Size()
-			func() {
-
-				count := maxChoice - size + 1
-				if count <= 0 {
+			start := time.Now()
+			record, err := v.Vote(ballot)
+			if err != nil {
+				var e *markus.UnknownChoiceError
+				if errors.As(err, &e) {
+					// do not care about racing remove choice and vote
 					return
 				}
-
-				start := time.Now()
-				if _, _, err := v.AddChoices(count); err != nil {
-					t.Error(err)
-				}
-				if size > 0 {
-					addTimesMu.Lock()
-					addTimes = append(addTimes, time.Since(start)/time.Duration(size))
-					addTimesMu.Unlock()
-				}
-
-				votingLog = append(votingLog, count)
-			}()
-
-			ballot := make(markus.Ballot)
-			for _, c := range choices {
-				ballot[c] = rand.Uint32() % uint32(len(choices)+1)
+				t.Error("vote", err)
+			}
+			if size > 0 {
+				voteTimesMu.Lock()
+				voteTimes = append(voteTimes, time.Since(start)/time.Duration(size))
+				voteTimesMu.Unlock()
 			}
 
-			func() {
+			recordsToRemove = append(recordsToRemove, record)
+			votingLog = append(votingLog, ballot)
+		}()
 
-				start := time.Now()
-				if _, err := v.Vote(ballot); err != nil {
-					t.Error(err)
-				}
-				if size > 0 {
-					voteTimesMu.Lock()
-					voteTimes = append(voteTimes, time.Since(start)/time.Duration(size))
-					voteTimesMu.Unlock()
-				}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-				votingLog = append(votingLog, ballot)
-			}()
+			mu.Lock()
+			defer mu.Unlock()
+
+			if rand.Uint32()%2 == 0 || len(recordsToRemove) == 0 {
+				return
+			}
+
+			index := rand.Intn(len(recordsToRemove))
+			record := recordsToRemove[index]
+
+			if err := v.Unvote(record); err != nil {
+				t.Error("unvote", err)
+			}
+			recordsToRemove = append(recordsToRemove[:index], recordsToRemove[index+1:]...)
+
+			votingLog = append(votingLog, record)
 		}()
 
 		wg.Add(1)
@@ -687,8 +796,21 @@ func TestVoting_concurrency(t *testing.T) {
 			if _, _, err := validation.AddChoices(m); err != nil {
 				t.Fatal(err)
 			}
+		case []uint64:
+			if err := validation.RemoveChoices(m...); err != nil {
+				t.Fatal(err)
+			}
 		case markus.Ballot:
 			if _, err := validation.Vote(m); err != nil {
+				var e *markus.UnknownChoiceError
+				if errors.As(err, &e) {
+					// do not care about racing remove choice and vote
+					continue
+				}
+				t.Fatal(err)
+			}
+		case markus.Record:
+			if err := validation.Unvote(m); err != nil {
 				t.Fatal(err)
 			}
 		default:
@@ -786,6 +908,457 @@ func TestVoting_strengthsMatrixPreparation(t *testing.T) {
 	assertEqual(t, "tie", gotTie, wantTie)
 }
 
+func TestVoting_changeChoices(t *testing.T) {
+	type action struct {
+		add    uint64
+		remove []uint64
+	}
+
+	for _, tc := range []struct {
+		name    string
+		ballots []markus.Ballot
+		initial uint64
+		steps   []action
+	}{
+		{
+			name:    "no votes, no choices",
+			initial: 0,
+			steps:   nil,
+		},
+		{
+			name:    "initial votes, no change",
+			initial: 5,
+			steps:   nil,
+		},
+		{
+			name: "single vote, single choice",
+			ballots: []markus.Ballot{
+				{0: 1},
+			},
+			initial: 1,
+		},
+		{
+			name: "single vote, no change",
+			ballots: []markus.Ballot{
+				{1: 1},
+			},
+			initial: 5,
+		},
+		{
+			name: "multiple votes, no change",
+			ballots: []markus.Ballot{
+				{1: 1},
+				{0: 1, 2: 2, 3: 2},
+				{1: 1, 3: 2, 4: 3},
+			},
+			initial: 5,
+		},
+		{
+			name: "multiple votes, remove first choice",
+			ballots: []markus.Ballot{
+				{0: 1},
+				{0: 1},
+				{1: 1},
+				{1: 1},
+				{1: 1, 0: 2},
+				{2: 1},
+				{2: 1},
+				{2: 1, 1: 2},
+				{2: 2, 1: 2, 0: 3},
+				{3: 1},
+				{3: 1},
+				{3: 1, 2: 2},
+				{3: 2, 2: 2, 1: 3},
+				{3: 1, 2: 3, 1: 3, 0: 4},
+				{4: 1},
+				{4: 1},
+				{4: 2, 3: 2},
+				{4: 1, 3: 2},
+				{4: 2, 3: 2, 2: 3},
+				{4: 1, 3: 2, 2: 3, 1: 3},
+				{4: 2, 3: 2, 2: 3, 1: 4, 0: 5},
+			},
+			initial: 5,
+			steps: []action{
+				{remove: []uint64{0}},
+			},
+		},
+		{
+			name: "multiple votes, remove last choice",
+			ballots: []markus.Ballot{
+				{0: 1},
+				{0: 1},
+				{1: 1},
+				{1: 1},
+				{1: 1, 0: 2},
+				{2: 1},
+				{2: 1},
+				{2: 1, 1: 2},
+				{2: 2, 1: 2, 0: 3},
+				{3: 1},
+				{3: 1},
+				{3: 1, 2: 2},
+				{3: 2, 2: 2, 1: 3},
+				{3: 1, 2: 3, 1: 3, 0: 4},
+				{4: 1},
+				{4: 1},
+				{4: 2, 3: 2},
+				{4: 1, 3: 2},
+				{4: 2, 3: 2, 2: 3},
+				{4: 1, 3: 2, 2: 3, 1: 3},
+				{4: 2, 3: 2, 2: 3, 1: 4, 0: 5},
+			},
+			initial: 5,
+			steps: []action{
+				{remove: []uint64{4}},
+			},
+		},
+		{
+			name: "multiple votes, remove middle choice",
+			ballots: []markus.Ballot{
+				{0: 1},
+				{0: 1},
+				{1: 1},
+				{1: 1},
+				{1: 1, 0: 2},
+				{2: 1},
+				{2: 1},
+				{2: 1, 1: 2},
+				{2: 2, 1: 2, 0: 3},
+				{3: 1},
+				{3: 1},
+				{3: 1, 2: 2},
+				{3: 2, 2: 2, 1: 3},
+				{3: 1, 2: 3, 1: 3, 0: 4},
+				{4: 1},
+				{4: 1},
+				{4: 2, 3: 2},
+				{4: 1, 3: 2},
+				{4: 2, 3: 2, 2: 3},
+				{4: 1, 3: 2, 2: 3, 1: 3},
+				{4: 2, 3: 2, 2: 3, 1: 4, 0: 5},
+			},
+			initial: 5,
+			steps: []action{
+				{remove: []uint64{2}},
+			},
+		},
+		{
+			name: "multiple votes, remove multiple choices",
+			ballots: []markus.Ballot{
+				{0: 1},
+				{0: 1},
+				{1: 1},
+				{1: 1},
+				{1: 1, 0: 2},
+				{2: 1},
+				{2: 1},
+				{2: 1, 1: 2},
+				{2: 2, 1: 2, 0: 3},
+				{3: 1},
+				{3: 1},
+				{3: 1, 2: 2},
+				{3: 2, 2: 2, 1: 3},
+				{3: 1, 2: 3, 1: 3, 0: 4},
+				{4: 1},
+				{4: 1},
+				{4: 2, 3: 2},
+				{4: 1, 3: 2},
+				{4: 2, 3: 2, 2: 3},
+				{4: 1, 3: 2, 2: 3, 1: 3},
+				{4: 2, 3: 2, 2: 3, 1: 4, 0: 5},
+			},
+			initial: 5,
+			steps: []action{
+				{remove: []uint64{1, 2}},
+			},
+		},
+		{
+			name: "single vote add choice",
+			ballots: []markus.Ballot{
+				{0: 1},
+			},
+			initial: 2,
+			steps: []action{
+				{add: 1},
+			},
+		},
+		{
+			name: "multiple votes, add choice",
+			ballots: []markus.Ballot{
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{1: 1, 0: 2},
+				{1: 1},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{2: 1},
+				{2: 1},
+				{2: 1},
+				{2: 1, 1: 2},
+				{2: 2, 1: 2, 0: 3},
+				{3: 1},
+				{3: 1},
+				{3: 1, 2: 2},
+				{3: 2, 2: 2, 1: 3},
+				{3: 1, 2: 3, 1: 3, 0: 4},
+				{4: 1},
+				{4: 1},
+				{4: 2, 3: 2},
+				{4: 1, 3: 2},
+				{4: 2, 3: 2, 2: 3},
+				{4: 1, 3: 2, 2: 3, 1: 3},
+				{4: 2, 3: 2, 2: 3, 1: 4, 0: 5},
+				{0: 1, 1: 2, 2: 3, 3: 4, 4: 5},
+				{0: 1, 1: 2, 2: 3, 3: 4},
+				{5: 1},
+			},
+			initial: 6,
+			steps: []action{
+				{add: 1},
+			},
+		},
+		{
+			name: "multiple votes, new choices",
+			ballots: []markus.Ballot{
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{1: 1, 0: 2},
+				{1: 1},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{2: 1},
+				{2: 1},
+				{2: 1},
+				{2: 1, 1: 2},
+				{2: 2, 1: 2, 0: 3},
+				{3: 1},
+				{3: 1},
+				{3: 1, 2: 2},
+				{3: 2, 2: 2, 1: 3},
+				{3: 1, 2: 3, 1: 3, 0: 4},
+				{4: 1},
+				{4: 1},
+				{4: 2, 3: 2},
+				{4: 1, 3: 2},
+				{4: 2, 3: 2, 2: 3},
+				{4: 1, 3: 2, 2: 3, 1: 3},
+				{4: 2, 3: 2, 2: 3, 1: 4, 0: 5},
+				{0: 1, 1: 2, 2: 3, 3: 4, 4: 5},
+				{0: 1, 1: 2, 2: 3, 3: 4},
+				{5: 1},
+			},
+			initial: 6,
+			steps: []action{
+				{add: 3},
+			},
+		},
+		{
+			name: "multiple votes, add and remove choices",
+			ballots: []markus.Ballot{
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{0: 1},
+				{1: 1, 0: 2},
+				{1: 1},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{1: 1, 0: 2},
+				{2: 1},
+				{2: 1},
+				{2: 1},
+				{2: 1, 1: 2},
+				{2: 2, 1: 2, 0: 3},
+				{3: 1},
+				{3: 1},
+				{3: 1, 2: 2},
+				{3: 2, 2: 2, 1: 3},
+				{3: 1, 2: 3, 1: 3, 0: 4},
+				{4: 1},
+				{4: 1},
+				{4: 2, 3: 2},
+				{4: 1, 3: 2},
+				{4: 2, 3: 2, 2: 3},
+				{4: 1, 3: 2, 2: 3, 1: 3},
+				{4: 2, 3: 2, 2: 3, 1: 4, 0: 5},
+				{0: 1, 1: 2, 2: 3, 3: 4, 4: 5},
+				{0: 1, 1: 2, 2: 3, 3: 4},
+				{5: 1},
+			},
+			initial: 6,
+			steps: []action{
+				{add: 1},
+				{remove: []uint64{0, 5}},
+				{add: 2},
+				{add: 1},
+				{remove: []uint64{1, 7, 8}},
+				{remove: []uint64{2}},
+				{add: 3},
+			},
+		},
+		{
+			name:    "hundred random votes, new, remove and swap choices",
+			ballots: randomBallots(t, 6, 100),
+			initial: 6,
+			steps: []action{
+				{add: 1},
+				{remove: []uint64{0, 5}},
+				{add: 2},
+				{add: 1},
+				{remove: []uint64{1, 7, 8}},
+				{remove: []uint64{2}},
+				{add: 3},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			currentVoting := newMarkusVoting(t)
+			_, _, err := currentVoting.AddChoices(tc.initial)
+			assertEqual(t, "error", err, nil)
+
+			for _, b := range tc.ballots {
+				_, err := currentVoting.Vote(b)
+				assertEqual(t, "error", err, nil)
+			}
+
+			for _, a := range tc.steps {
+				if a.add > 0 {
+					_, _, err := currentVoting.AddChoices(a.add)
+					assertEqual(t, "error", err, nil)
+				}
+				if len(a.remove) > 0 {
+					err := currentVoting.RemoveChoices(a.remove...)
+					assertEqual(t, "error", err, nil)
+				}
+			}
+
+			validationVoting := newMarkusVoting(t)
+			_, _, err = validationVoting.AddChoices(tc.initial)
+			assertEqual(t, "error", err, nil)
+
+			for _, a := range tc.steps {
+				if a.add > 0 {
+					_, _, err := validationVoting.AddChoices(a.add)
+					assertEqual(t, "error", err, nil)
+				}
+				if len(a.remove) > 0 {
+					err := validationVoting.RemoveChoices(a.remove...)
+					assertEqual(t, "error", err, nil)
+				}
+			}
+
+			for _, b := range tc.ballots {
+				b := removeMissingChoices(b, validationVoting.Choices())
+				if _, err := validationVoting.Vote(b); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			assertPreferences(t, currentVoting, validationVoting)
+		})
+	}
+}
+
+func TestVoting_Unvote_correctness(t *testing.T) {
+	v1 := newMarkusVoting(t)
+	v2 := newMarkusVoting(t) // validation (does not receive unvote calls)
+
+	_, _, err := v1.AddChoices(10)
+	assertEqual(t, "error", err, nil)
+	_, _, err = v2.AddChoices(10)
+	assertEqual(t, "error", err, nil)
+
+	var recordsToRemove []debugRecord
+
+	seed := time.Now().UnixNano()
+	t.Log("randomness seed", seed)
+	random := rand.New(rand.NewSource(seed))
+
+	for i := 0; i < 1000; i++ {
+		t.Log("iteration", i)
+
+		b := randomBallot(t, random, excludeChoices(v1.Choices(), 5))
+
+		t.Log("vote ballot", i, b)
+
+		r, err := v1.Vote(b)
+		assertEqual(t, "error", err, nil)
+
+		t.Log("vote record", i, r)
+
+		if random.Intn(100) == 0 {
+			recordsToRemove = append(recordsToRemove, debugRecord{
+				Record: r,
+				index:  i,
+			})
+		} else {
+			_, err := v2.Vote(b)
+			assertEqual(t, "error", err, nil)
+		}
+
+		if len(recordsToRemove) == 0 {
+			assertPreferences(t, v1, v2)
+		}
+
+		if choices := randomRemoveChoices(t, random, excludeChoices(v1.Choices(), 5)); len(choices) != 0 {
+			err := v1.RemoveChoices(choices...)
+			assertEqual(t, "error", err, nil)
+			err = v2.RemoveChoices(choices...)
+			assertEqual(t, "error", err, nil)
+			t.Log("remove choices", choices)
+		}
+
+		recordsToRemove = randomUnvote(t, random, v1, recordsToRemove)
+
+		if len(recordsToRemove) == 0 {
+			assertPreferences(t, v1, v2)
+		}
+
+		if count := randomAddChoices(t, random); count != nil {
+			from, to, err := v1.AddChoices(*count)
+			assertEqual(t, "error", err, nil)
+			validationFrom, validationTo, err := v2.AddChoices(*count)
+			assertEqual(t, "error", err, nil)
+			t.Log("add choices", "count", *count, "from", from, "to", to, "validation from", validationFrom, "to", validationTo)
+		}
+
+		if len(recordsToRemove) == 0 {
+			assertPreferences(t, v1, v2)
+		}
+	}
+}
+
 func BenchmarkVoting_ComputeSorted(b *testing.B) {
 	b.Log("creating voting...")
 
@@ -880,4 +1453,260 @@ func newMarkusVoting(t testing.TB) *markus.Voting {
 		}
 	})
 	return v
+}
+
+func fprintPreferences(w io.Writer, choices []string, preferences []uint32) (int, error) {
+	var width int
+	for _, c := range choices {
+		l := len(fmt.Sprint(c))
+		if l > width {
+			width = l
+		}
+	}
+	for _, p := range preferences {
+		l := len(fmt.Sprint(p))
+		if l > width {
+			width = l
+		}
+	}
+	format := fmt.Sprintf("%%%vv ", width)
+	var count int
+	write := func(v string) error {
+		n, err := fmt.Fprint(w, v)
+		if err != nil {
+			return err
+		}
+		count += n
+		return nil
+	}
+
+	if err := write(fmt.Sprintf(format, "")); err != nil {
+		return count, err
+	}
+	for _, c := range choices {
+		if err := write(fmt.Sprintf(format, c)); err != nil {
+			return count, err
+		}
+	}
+	if err := write("\n"); err != nil {
+		return count, err
+	}
+
+	m := matrix(preferences)
+
+	for i, col := range m {
+		if err := write(fmt.Sprintf(format, choices[i])); err != nil {
+			return count, err
+		}
+		for _, p := range col {
+			if err := write(fmt.Sprintf(format, p)); err != nil {
+				return count, err
+			}
+		}
+		if err := write("\n"); err != nil {
+			return count, err
+		}
+	}
+
+	return count, nil
+}
+
+func sprintPreferences(choices []string, preferences []uint32) string {
+	var buf bytes.Buffer
+	_, _ = fprintPreferences(&buf, choices, preferences)
+	return buf.String()
+}
+
+func matrix(preferences []uint32) [][]uint32 {
+	l := len(preferences)
+	choicesCount := floorSqrt(l)
+	if choicesCount*choicesCount != l {
+		return nil
+	}
+
+	matrix := make([][]uint32, 0, choicesCount)
+
+	for i := 0; i < choicesCount; i++ {
+		matrix = append(matrix, preferences[i*choicesCount:(i+1)*choicesCount])
+	}
+	return matrix
+}
+
+func floorSqrt(x int) int {
+	if x == 0 || x == 1 {
+		return x
+	}
+	start := 1
+	end := x / 2
+	ans := 0
+	for start <= end {
+		mid := (start + end) / 2
+		if mid*mid == x {
+			return mid
+		}
+		if mid*mid < x {
+			start = mid + 1
+			ans = mid
+		} else {
+			end = mid - 1
+		}
+	}
+	return ans
+}
+
+func assertPreferences(t *testing.T, gotVoting, wantVoting *markus.Voting) {
+	t.Helper()
+
+	gotPreferences := sprintPreferences(gotVoting.PreferencesMatrixLabels(), gotVoting.PreferencesMatrix())
+	wantPreferences := sprintPreferences(wantVoting.PreferencesMatrixLabels(), wantVoting.PreferencesMatrix())
+
+	if gotPreferences != wantPreferences {
+		t.Fatalf("\ngot preferences\n%v\nwant\n%v\n", gotPreferences, wantPreferences)
+	} else {
+		if verbose {
+			t.Logf("\npreferences\n%v\nvalidation preferences\n%v\n", gotPreferences, wantPreferences)
+		}
+	}
+}
+
+func randomBallot(t testing.TB, random *rand.Rand, choices []uint64) markus.Ballot {
+	t.Helper()
+
+	choicesCount := uint64(len(choices))
+
+	votedChoices := choicesCount
+	if random.Intn(3) != 0 { // 30% ballots with unvoted choices
+		votedChoices = random.Uint64() % choicesCount
+	}
+
+	b := make(markus.Ballot)
+	for i := uint64(0); i < votedChoices; i++ {
+		b[choices[random.Uint64()%choicesCount]] = random.Uint32() % uint32(choicesCount)
+	}
+
+	return b
+}
+
+func randomAddChoices(t testing.TB, random *rand.Rand) *uint64 {
+	t.Helper()
+
+	if random.Intn(100) != 0 {
+		return nil
+	}
+
+	count := random.Uint64()%3 + 1
+	return &count
+}
+
+func randomRemoveChoices(t testing.TB, random *rand.Rand, choices []uint64) []uint64 {
+	t.Helper()
+
+	if random.Intn(100) != 0 || len(choices) <= 2 {
+		return nil
+	}
+
+	count := random.Int()%3 + 1
+	toRemove := make([]uint64, 0, count)
+	for i := 0; i < count; i++ {
+		if len(choices) <= 2 {
+			break
+		}
+		index := random.Intn(len(choices))
+		var c uint64
+		c, choices = choices[index], choices[index:index+1]
+		toRemove = append(toRemove, c)
+	}
+
+	return toRemove
+}
+
+type debugRecord struct {
+	markus.Record
+	index int
+}
+
+func randomUnvote(t testing.TB, random *rand.Rand, v *markus.Voting, candidates []debugRecord) []debugRecord {
+	if random.Intn(2) != 0 || len(candidates) == 0 {
+		return candidates
+	}
+
+	count := len(candidates)
+	if random.Intn(3) != 0 {
+		count = random.Intn(len(candidates)) + 1
+	}
+
+	for i := 0; i < count; i++ {
+		index := random.Intn(len(candidates))
+		var r debugRecord
+		r, candidates = candidates[index], append(candidates[:index], candidates[index+1:]...)
+		if verbose {
+			t.Logf("\nbefore unvote\n%v\n", sprintPreferences(v.PreferencesMatrixLabels(), v.PreferencesMatrix()))
+		}
+		if err := v.Unvote(r.Record); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("unvote", r.index, r.Record)
+	}
+
+	return candidates
+}
+
+func excludeChoices(choices []uint64, exclude ...uint64) []uint64 {
+	contains := func(c uint64) bool {
+		for _, e := range exclude {
+			if e == c {
+				return true
+			}
+		}
+		return false
+	}
+	r := make([]uint64, 0, len(choices)-len(exclude))
+	for _, c := range choices {
+		if contains(c) {
+			continue
+		}
+		r = append(r, c)
+	}
+	return r
+}
+
+func removeMissingChoices(b markus.Ballot, choices []uint64) markus.Ballot {
+	r := make(map[uint64]uint32)
+	for c, v := range b {
+		if !contains(choices, c) {
+			continue
+		}
+		r[c] = v
+	}
+	return r
+}
+
+func contains(s []uint64, e uint64) bool {
+	for _, x := range s {
+		if x == e {
+			return true
+		}
+	}
+	return false
+}
+
+func randomBallots(t *testing.T, choices uint64, count int) []markus.Ballot {
+	t.Helper()
+
+	seed := time.Now().UnixNano()
+	t.Logf("random ballots seed: %v", seed)
+
+	random := rand.New(rand.NewSource(seed))
+
+	ballots := make([]markus.Ballot, 0, count)
+
+	for i := 0; i < count; i++ {
+		b := make(markus.Ballot)
+		for i := uint64(0); i < choices; i++ {
+			b[random.Uint64()%choices] = random.Uint32() % uint32(choices)
+		}
+		ballots = append(ballots, b)
+	}
+
+	return ballots
 }

@@ -8,6 +8,7 @@ package markus
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,12 +22,12 @@ import (
 // Voting holds number of votes for every pair of choices. Methods on the Voting
 // type are safe for concurrent calls.
 type Voting struct {
-	path         string
-	preferences  *matrix.Matrix
-	strengths    *matrix.Matrix
-	choicesIndex *indexmap.Map
-	choicesCount uint64
-	closed       bool
+	path            string
+	preferences     *matrix.Matrix
+	strengths       *matrix.Matrix
+	choicesIndex    *indexmap.Map
+	preferencesSize uint64
+	closed          bool
 
 	mu          sync.RWMutex
 	strengthsMu sync.Mutex
@@ -51,33 +52,65 @@ func NewVoting(path string) (*Voting, error) {
 		return nil, fmt.Errorf("open choices index: %w", err)
 	}
 	return &Voting{
-		path:         path,
-		preferences:  preferences,
-		choicesCount: preferences.Size(),
-		choicesIndex: im,
+		path:            path,
+		preferences:     preferences,
+		preferencesSize: preferences.Size(),
+		choicesIndex:    im,
 	}, nil
 }
 
 // AddChoices adds new choices to the voting. It returns the range of the new
-// indexes, with to value as non-inclusive.
+// indexes, with to value as inclusive.
 func (v *Voting) AddChoices(count uint64) (from, to uint64, err error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	from, to, err = v.preferences.Resize(int64(count))
-	if err != nil {
-		return 0, 0, fmt.Errorf("resize preferences matrix for %d: %w", count, err)
+	preferencesResize := int64(0)
+	from = math.MaxUint64
+	for i := uint64(0); i < count; i++ {
+		physical, virtual := v.choicesIndex.Add()
+		if physical >= v.preferencesSize {
+			preferencesResize++
+		}
+		if virtual < from {
+			from = virtual
+		}
+		to = virtual
 	}
 
-	for i := from; i < to; i++ {
-		v.choicesIndex.Add(i)
+	if preferencesResize > 0 {
+		if _, _, err = v.preferences.Resize(preferencesResize); err != nil {
+			return 0, 0, fmt.Errorf("resize preferences matrix for %v: %w", preferencesResize, err)
+		}
+	}
+
+	// set the column of the new choice to the values of the
+	// preferences' diagonal values, just as nobody voted for the
+	// new choice to ensure consistency
+	for j := from; j <= to; j++ {
+		j, has := v.choicesIndex.GetPhysical(j)
+		if !has {
+			continue
+		}
+		for i := uint64(0); i <= to; i++ {
+			i, has := v.choicesIndex.GetPhysical(i)
+			if !has {
+				continue
+			}
+			value := v.preferences.Get(i, i)
+			v.preferences.Set(i, j, value)
+		}
 	}
 
 	if err := v.choicesIndex.Write(); err != nil {
 		return 0, 0, fmt.Errorf("write choices index: %w", err)
 	}
 
-	v.choicesCount = v.preferences.Size()
+	v.preferencesSize = v.preferences.Size()
+
+	if err := v.preferences.Sync(); err != nil {
+		return 0, 0, fmt.Errorf("sync preferences matrix: %w", err)
+	}
 
 	return from, to, nil
 }
@@ -88,7 +121,15 @@ func (v *Voting) RemoveChoices(indexes ...uint64) error {
 	defer v.mu.Unlock()
 
 	for _, i := range indexes {
+		physical, has := v.choicesIndex.GetPhysical(i)
+		if !has {
+			continue
+		}
 		v.choicesIndex.Remove(i)
+		for j := uint64(0); j < v.preferencesSize; j++ {
+			v.preferences.Set(physical, j, 0)
+			v.preferences.Set(j, physical, 0)
+		}
 	}
 
 	if err := v.choicesIndex.Write(); err != nil {
@@ -103,15 +144,11 @@ func (v *Voting) RemoveChoices(indexes ...uint64) error {
 // have the same rank. Ranks do not have to be in consecutive order.
 type Ballot map[uint64]uint32
 
-// Record represents a single vote with ranked choices. Ranks field is a list of
-// Ballot values. The first ballot is the list with the first choices, the
-// second ballot is the list with the second choices, and so on. Size field
-// represents the number of choices at the time of the vote. Record is returned
-// by the Vote method and can be used to undo the vote.
-type Record struct {
-	Ranks [][]uint64
-	Size  uint64
-}
+// Record represents a single vote with ranked choices. It is a list of Ballot
+// values. The first ballot is the list with the first choices, the second
+// ballot is the list with the second choices, and so on. The last ballot is the
+// list of choices that are not ranked, which can be an empty list.
+type Record [][]uint64
 
 // Vote adds a voting preferences by a single voting ballot. A record of a
 // complete and normalized preferences is returned that can be used to unvote.
@@ -119,22 +156,21 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	choicesLen := v.choicesCount
+	choicesCursor := v.choicesIndex.Cursor()
 
 	ballotLen := uint64(len(b))
 
 	ballotRanks := make(map[uint32][]uint64, ballotLen)
 
 	for index, rank := range b {
-		matrixIndex, has := v.choicesIndex.Get(index)
-		if !has {
-			return Record{}, &UnknownChoiceError{Index: matrixIndex}
+		if index >= choicesCursor {
+			return Record{}, &UnknownChoiceError{Index: index}
 		}
-		if matrixIndex >= choicesLen {
-			return Record{}, &UnknownChoiceError{Index: matrixIndex}
+		if _, has := v.choicesIndex.GetPhysical(index); !has {
+			return Record{}, &UnknownChoiceError{Index: index}
 		}
 
-		ballotRanks[rank] = append(ballotRanks[rank], matrixIndex)
+		ballotRanks[rank] = append(ballotRanks[rank], index)
 	}
 
 	rankNumbers := make([]uint32, 0, len(ballotRanks))
@@ -146,11 +182,21 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 		return rankNumbers[i] < rankNumbers[j]
 	})
 
-	hasUnrankedChoices := uint64(len(b)) != choicesLen
+	hasUnrankedChoices := uint64(len(b)) != choicesCursor
 
 	ranksLen := len(rankNumbers)
 	if hasUnrankedChoices {
 		ranksLen++
+	}
+
+	// all choices are ranked, tread diagonal values as a single not ranked
+	// choice, deprioritizing them for all existing choices
+	for i := range b {
+		i, has := v.choicesIndex.GetPhysical(i)
+		if !has {
+			continue
+		}
+		v.preferences.Inc(i, i)
 	}
 
 	ranks := make([][]uint64, 0, ranksLen)
@@ -159,19 +205,21 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 	}
 
 	if hasUnrankedChoices {
-		ranks = append(ranks, unrankedChoices(choicesLen, ranks))
+		ranks = append(ranks, unrankedChoices(choicesCursor, ranks))
+	} else {
+		ranks = append(ranks, make([]uint64, 0))
 	}
 
 	for rank, choices1 := range ranks {
 		rest := ranks[rank+1:]
 		for _, index1 := range choices1 {
-			index1, has := v.choicesIndex.Get(index1)
+			index1, has := v.choicesIndex.GetPhysical(index1)
 			if !has {
 				continue
 			}
 			for _, choices2 := range rest {
 				for _, index2 := range choices2 {
-					index2, has := v.choicesIndex.Get(index2)
+					index2, has := v.choicesIndex.GetPhysical(index2)
 					if !has {
 						continue
 					}
@@ -189,10 +237,7 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 		return Record{}, fmt.Errorf("sync preferences matrix: %w", err)
 	}
 
-	return Record{
-		Ranks: ranks,
-		Size:  v.choicesCount,
-	}, nil
+	return ranks, nil
 }
 
 // Unvote removes the vote from the preferences.
@@ -200,27 +245,58 @@ func (v *Voting) Unvote(r Record) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	ranks := r.Ranks
-
-	uc := unrankedChoices(r.Size, ranks)
-	if len(uc) > 0 {
-		ranks = append(ranks, uc)
+	recordLength := len(r)
+	if recordLength == 0 {
+		return nil
 	}
 
-	for rank, choices1 := range ranks {
-		rest := ranks[rank+1:]
+	var max uint64
+	for rank, choices1 := range r {
+		rest := r[rank+1:]
 		for _, index1 := range choices1 {
-			index1, has := v.choicesIndex.Get(index1)
+			if index1 > max {
+				max = index1
+			}
+			index1, has := v.choicesIndex.GetPhysical(index1)
 			if !has {
 				continue
 			}
 			for _, choices2 := range rest {
 				for _, index2 := range choices2 {
-					index2, has := v.choicesIndex.Get(index2)
+					index2, has := v.choicesIndex.GetPhysical(index2)
 					if !has {
 						continue
 					}
 					v.preferences.Dec(index1, index2)
+				}
+			}
+		}
+	}
+
+	rankedChoices := make(map[uint64]struct{}) // physical
+
+	// remove voting from the ranked choices of the Record
+	for _, choices := range r[:recordLength-1] {
+		for _, index := range choices {
+			index, has := v.choicesIndex.GetPhysical(index)
+			if !has {
+				continue
+			}
+			v.preferences.Dec(index, index)
+			rankedChoices[index] = struct{}{} // physical
+		}
+	}
+
+	// remove votes of the choices that were added after the Record
+	for i := uint64(0); i < v.preferencesSize; i++ {
+		if _, ok := rankedChoices[i]; ok {
+			for j := uint64(0); j < v.preferencesSize; j++ {
+				virtual, has := v.choicesIndex.GetVirtual(j)
+				if !has {
+					continue
+				}
+				if virtual > max {
+					v.preferences.Dec(i, j)
 				}
 			}
 		}
@@ -239,11 +315,15 @@ func (v *Voting) Unvote(r Record) error {
 
 func unrankedChoices(choicesLen uint64, ranks [][]uint64) (unranked []uint64) {
 	ranked := bitset.New(choicesLen)
+	var count uint64
 	for _, rank := range ranks {
 		for _, index := range rank {
 			ranked.Set(index)
+			count++
 		}
 	}
+
+	unranked = make([]uint64, 0, choicesLen-count)
 
 	ranked.IterateUnset(func(i uint64) {
 		unranked = append(unranked, i)
@@ -278,7 +358,7 @@ func (v *Voting) Size() uint64 {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	return v.choicesCount
+	return v.preferencesSize - uint64(v.choicesIndex.FreeCount())
 }
 
 // Compute calculates the results of the voting. The function passed as the
@@ -298,7 +378,7 @@ func (v *Voting) ComputeSorted(ctx context.Context) (results []Result, tie, stal
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	results = make([]Result, 0, v.choicesCount)
+	results = make([]Result, 0, v.preferencesSize)
 
 	stale, err = v.compute(ctx, func(r Result) (bool, error) {
 		results = append(results, r)
@@ -326,8 +406,8 @@ func (v *Voting) ComputeSorted(ctx context.Context) (results []Result, tie, stal
 }
 
 func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (stale bool, err error) {
-	choicesCount := v.choicesCount
-	if choicesCount == 0 {
+	preferencesSize := v.preferencesSize
+	if preferencesSize == 0 {
 		return false, nil
 	}
 
@@ -352,14 +432,14 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 			return false, fmt.Errorf("invalidate strengths matrix version: %w", err)
 		}
 
-		for i := uint64(0); i < choicesCount; i++ {
+		for i := uint64(0); i < preferencesSize; i++ {
 			select {
 			case <-ctx.Done():
 				return false, ctx.Err()
 			default:
 			}
 
-			for j := uint64(0); j < choicesCount; j++ {
+			for j := uint64(0); j < preferencesSize; j++ {
 
 				if i == j {
 					continue
@@ -372,13 +452,13 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 			}
 		}
 
-		for i := uint64(0); i < choicesCount; i++ {
-			_, has := v.choicesIndex.Get(i)
+		for i := uint64(0); i < preferencesSize; i++ {
+			_, has := v.choicesIndex.GetPhysical(i)
 			if !has {
 				continue
 			}
 
-			for j := uint64(0); j < choicesCount; j++ {
+			for j := uint64(0); j < preferencesSize; j++ {
 				// check is not needed, avoid the condition call for performance
 				// has := v.choicesIndex.Has(j)
 				// if !has {
@@ -394,7 +474,7 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 				default:
 				}
 				ji := v.strengths.Get(j, i)
-				for k := uint64(0); k < choicesCount; k++ {
+				for k := uint64(0); k < preferencesSize; k++ {
 					// check is not needed, avoid the condition call for performance
 					// has := v.choicesIndex.Has(k)
 					// if !has {
@@ -426,14 +506,15 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 		}
 	}
 
-	for i := uint64(0); i < choicesCount; i++ {
+	choicesCursor := v.choicesIndex.Cursor()
+	for i := uint64(0); i < choicesCursor; i++ {
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()
 		default:
 		}
 
-		i, has := v.choicesIndex.Get(i)
+		i, has := v.choicesIndex.GetPhysical(i)
 		if !has {
 			continue
 		}
@@ -442,8 +523,8 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 		var strength uint64
 		var advantage uint64
 
-		for j := uint64(0); j < choicesCount; j++ {
-			j, has := v.choicesIndex.Get(j)
+		for j := uint64(0); j < choicesCursor; j++ {
+			j, has := v.choicesIndex.GetPhysical(j)
 			if !has {
 				continue
 			}

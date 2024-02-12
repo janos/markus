@@ -20,57 +20,92 @@ func TestMap(t *testing.T) {
 
 	assertEqual(t, "free count", m.FreeCount(), 0)
 
-	assertMap(t, m, nil, nil, 0)
+	assertMap(t, m, nil, 0, 0)
 
 	m.Remove(10)
 
-	assertMap(t, m, nil, []uint64{10}, 1)
+	assertMap(t, m, nil, 0, 0)
 
-	m.Add(30)
+	physical, virtual := m.Add()
+	assertEqual(t, "physical", physical, 0)
+	assertEqual(t, "virtual", virtual, 0)
 
-	assertMap(t, m, map[uint64]uint64{30: 10}, []uint64{10}, 0)
+	assertMap(t, m, map[uint64]uint64{0: 0}, 1, 0)
 
-	m.Add(40)
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 1)
+	assertEqual(t, "virtual", virtual, 1)
 
-	assertMap(t, m, map[uint64]uint64{30: 10}, []uint64{10}, 0)
+	assertMap(t, m, map[uint64]uint64{0: 0, 1: 1}, 2, 0)
 
-	m.Remove(30)
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 2)
+	assertEqual(t, "virtual", virtual, 2)
 
-	assertMap(t, m, nil, []uint64{10}, 1)
+	assertMap(t, m, map[uint64]uint64{0: 0, 1: 1, 2: 2}, 3, 0)
+
+	m.Remove(1)
+
+	assertMap(t, m, map[uint64]uint64{0: 0, 2: 2}, 3, 1)
+
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 1)
+	assertEqual(t, "virtual", virtual, 3)
+
+	assertMap(t, m, map[uint64]uint64{0: 0, 2: 2, 3: 1}, 4, 0)
 
 	m.Remove(10)
 
-	assertMap(t, m, nil, []uint64{10}, 1)
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 3)
+	assertEqual(t, "virtual", virtual, 4)
 
-	m.Add(10)
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 4)
+	assertEqual(t, "virtual", virtual, 5)
 
-	assertMap(t, m, nil, nil, 0)
+	assertMap(t, m, map[uint64]uint64{0: 0, 2: 2, 3: 1, 4: 3, 5: 4}, 6, 0)
 
-	m.Add(30)
+	m.Remove(0)
+	m.Remove(3)
 
-	assertMap(t, m, nil, nil, 0)
+	assertMap(t, m, map[uint64]uint64{2: 2, 4: 3, 5: 4}, 6, 2)
 
-	m.Add(1)
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 0)
+	assertEqual(t, "virtual", virtual, 6)
 
-	assertMap(t, m, nil, nil, 0)
+	assertMap(t, m, map[uint64]uint64{6: 0, 2: 2, 4: 3, 5: 4}, 7, 1)
 
-	m.Remove(5)
-	m.Remove(6)
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 1)
+	assertEqual(t, "virtual", virtual, 7)
 
-	assertMap(t, m, nil, []uint64{5, 6}, 2)
+	assertMap(t, m, map[uint64]uint64{6: 0, 7: 1, 2: 2, 4: 3, 5: 4}, 8, 0)
 
-	m.Add(6)
-	m.Add(20)
-	m.Add(22)
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 5)
+	assertEqual(t, "virtual", virtual, 8)
+
+	assertMap(t, m, map[uint64]uint64{6: 0, 7: 1, 2: 2, 4: 3, 5: 4, 8: 5}, 9, 0)
+
+	physical, virtual = m.Add()
+	assertEqual(t, "physical", physical, 6)
+	assertEqual(t, "virtual", virtual, 9)
+
+	assertMap(t, m, map[uint64]uint64{6: 0, 7: 1, 2: 2, 4: 3, 5: 4, 8: 5, 9: 6}, 10, 0)
+
+	m.Remove(9)
 	m.Remove(8)
+	m.Remove(2)
 
-	assertMap(t, m, map[uint64]uint64{6: 5, 20: 6}, []uint64{5, 8}, 1)
+	assertMap(t, m, map[uint64]uint64{6: 0, 7: 1, 4: 3, 5: 4}, 10, 3)
 
 	assertError(t, m.Write(), nil)
 
 	m, _ = newMap(t, dir)
 
-	assertMap(t, m, map[uint64]uint64{6: 5, 20: 6}, []uint64{5, 8}, 1)
+	assertMap(t, m, map[uint64]uint64{6: 0, 7: 1, 4: 3, 5: 4}, 10, 3)
 }
 
 func newMap(t testing.TB, dir string) (*indexmap.Map, string) {
@@ -88,20 +123,31 @@ func newMap(t testing.TB, dir string) (*indexmap.Map, string) {
 	return m, dir
 }
 
-func assertMap(t testing.TB, m *indexmap.Map, realIndexes map[uint64]uint64, removed []uint64, freeCount int) {
+func assertMap(t testing.TB, m *indexmap.Map, indexes map[uint64]uint64, cursor uint64, freeCount int) {
 	t.Helper()
 
 	for i := uint64(0); i < 100; i++ {
-		gotRealIndex, gotOK := m.Get(i)
-		wantRealIndex, ok := realIndexes[i]
-		if !ok {
-			wantRealIndex = i
-		}
-		assertEqual(t, fmt.Sprintf("index %v", i), gotRealIndex, wantRealIndex)
-		assertEqual(t, fmt.Sprintf("ok %v", i), gotOK, !has(removed, i))
+		gotphysicalIndex, gotHas := m.GetPhysical(i)
+		wantphysicalIndex, wantHas := indexes[i]
+		assertEqual(t, fmt.Sprintf("index %v", i), gotphysicalIndex, wantphysicalIndex)
+		assertEqual(t, fmt.Sprintf("has %v", i), gotHas, wantHas)
+	}
+
+	virtualIndexes := make(map[uint64]uint64)
+
+	for k, v := range indexes {
+		virtualIndexes[v] = k
+	}
+
+	for i := uint64(0); i < 100; i++ {
+		gotVirtualIndex, gotHas := m.GetVirtual(i)
+		wantVirtualIndex, wantHas := virtualIndexes[i]
+		assertEqual(t, fmt.Sprintf("virtual index %v", i), gotVirtualIndex, wantVirtualIndex)
+		assertEqual(t, fmt.Sprintf("virtual has %v", i), gotHas, wantHas)
 	}
 
 	assertEqual(t, "free count", m.FreeCount(), freeCount)
+	assertEqual(t, "cursor", m.Cursor(), cursor)
 }
 
 func assertEqual[T any](t testing.TB, name string, got, want T) {
@@ -118,13 +164,4 @@ func assertError(t testing.TB, got, want error) {
 	if !errors.Is(got, want) {
 		t.Fatalf("got error %[1]T %[1]q, want %[2]T %[2]q", got, want)
 	}
-}
-
-func has(l []uint64, e uint64) bool {
-	for _, x := range l {
-		if x == e {
-			return true
-		}
-	}
-	return false
 }

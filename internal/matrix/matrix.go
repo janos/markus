@@ -14,9 +14,8 @@ import (
 )
 
 const (
-	versionSize    = 8
-	maxElementSize = 8
-	elementSize    = uint64(unsafe.Sizeof(uint32(0)))
+	versionSize = 8
+	elementSize = uint64(unsafe.Sizeof(uint32(0)))
 )
 
 type Matrix struct {
@@ -117,14 +116,14 @@ func (m *Matrix) Resize(diff int64) (from, to uint64, err error) {
 
 func (m *Matrix) Get(i, j uint64) uint32 {
 	l := location(i, j)
-	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
+	buf := (*[elementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	return m.decode(buf)
 }
 
 func (m *Matrix) Set(i, j uint64, e uint32) {
 	l := location(i, j)
 	buf := m.encode(e)
-	src := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
+	src := (*[elementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	if bytes.Equal(src, buf) {
 		return
 	}
@@ -133,13 +132,13 @@ func (m *Matrix) Set(i, j uint64, e uint32) {
 
 func (m *Matrix) Inc(i, j uint64) {
 	l := location(i, j)
-	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
+	buf := (*[elementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	incrementLittleEndian(buf)
 }
 
 func (m *Matrix) Dec(i, j uint64) {
 	l := location(i, j)
-	buf := (*[maxElementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
+	buf := (*[elementSize]byte)(unsafe.Add(m.dataPtr, l*elementSize))[0:elementSize:elementSize]
 	decrementLittleEndian(buf)
 }
 
