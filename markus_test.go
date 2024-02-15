@@ -599,6 +599,10 @@ func TestVoting_addVoteAndUnvote(t *testing.T) {
 func TestVoting_concurrency(t *testing.T) {
 	v := newMarkusVoting(t)
 
+	seed := time.Now().UnixNano()
+	t.Log("randomness seed", seed)
+	random := rand.New(rand.NewSource(seed))
+
 	mu := new(sync.Mutex)
 	votingLog := make([]any, 0)
 	recordsToRemove := make([]markus.Record, 0)
@@ -650,7 +654,7 @@ func TestVoting_concurrency(t *testing.T) {
 
 			size := v.Size()
 
-			count := rand.Uint64() % choicesCount
+			count := random.Uint64() % choicesCount
 			if count <= 0 {
 				return
 			}
@@ -683,9 +687,9 @@ func TestVoting_concurrency(t *testing.T) {
 				return
 			}
 
-			toRemove := make([]uint64, rand.Intn(3))
+			toRemove := make([]uint64, random.Intn(3))
 			for i := range toRemove {
-				toRemove[i] = choices[rand.Intn(len(choices))]
+				toRemove[i] = choices[random.Intn(len(choices))]
 			}
 
 			if err := v.RemoveChoices(toRemove...); err != nil {
@@ -706,10 +710,10 @@ func TestVoting_concurrency(t *testing.T) {
 
 			ballot := make(markus.Ballot)
 			for _, c := range v.Choices() {
-				if rand.Uint32()%2 == 0 {
+				if random.Uint32()%2 == 0 {
 					continue
 				}
-				ballot[c] = rand.Uint32() % 10
+				ballot[c] = random.Uint32() % 10
 			}
 
 			size := v.Size()
@@ -742,11 +746,11 @@ func TestVoting_concurrency(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 
-			if rand.Uint32()%2 == 0 || len(recordsToRemove) == 0 {
+			if random.Uint32()%2 == 0 || len(recordsToRemove) == 0 {
 				return
 			}
 
-			index := rand.Intn(len(recordsToRemove))
+			index := random.Intn(len(recordsToRemove))
 			record := recordsToRemove[index]
 
 			if err := v.Unvote(record); err != nil {
@@ -909,6 +913,10 @@ func TestVoting_strengthsMatrixPreparation(t *testing.T) {
 }
 
 func TestVoting_changeChoices(t *testing.T) {
+	seed := time.Now().UnixNano()
+	t.Log("randomness seed", seed)
+	random := rand.New(rand.NewSource(seed))
+
 	type action struct {
 		add    uint64
 		remove []uint64
@@ -1229,7 +1237,7 @@ func TestVoting_changeChoices(t *testing.T) {
 		},
 		{
 			name:    "hundred random votes, new, remove and swap choices",
-			ballots: randomBallots(t, 6, 100),
+			ballots: randomBallots(t, random, 6, 100),
 			initial: 6,
 			steps: []action{
 				{add: 1},
@@ -1637,8 +1645,8 @@ func randomUnvote(t testing.TB, random *rand.Rand, v *markus.Voting, candidates 
 
 	for i := 0; i < count; i++ {
 		index := random.Intn(len(candidates))
-		var r debugRecord
-		r, candidates = candidates[index], append(candidates[:index], candidates[index+1:]...)
+		r := candidates[index]
+		candidates = append(candidates[:index], candidates[index+1:]...)
 		if verbose {
 			t.Logf("\nbefore unvote\n%v\n", sprintPreferences(v.PreferencesMatrixLabels(), v.PreferencesMatrix()))
 		}
@@ -1690,13 +1698,8 @@ func contains(s []uint64, e uint64) bool {
 	return false
 }
 
-func randomBallots(t *testing.T, choices uint64, count int) []markus.Ballot {
+func randomBallots(t *testing.T, random *rand.Rand, choices uint64, count int) []markus.Ballot {
 	t.Helper()
-
-	seed := time.Now().UnixNano()
-	t.Logf("random ballots seed: %v", seed)
-
-	random := rand.New(rand.NewSource(seed))
 
 	ballots := make([]markus.Ballot, 0, count)
 
