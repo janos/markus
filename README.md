@@ -14,7 +14,7 @@ This library is intended to be used for votings with large number of choices, us
 
 ## Usage
 
-A new voting can be created with `NewVoting` constructor. Voting is persisted on the disk to minimize memory usage with large number of choices. Provide a type of the choice, which can be only a positive integer. It is up to the user to reference choice indexes with the actual choice values. In order to optimize on space usage, uint32 or shorter integers can be used.
+A new voting can be created with `NewVoting` constructor. Voting is persisted on the disk to minimize memory usage with large number of choices.
 
 Choices can only be added with `AddChoices` method, which is expanding choice indexes. Choices cannot be removed or reordered. It is up to the user to ignore or reorder choices in the upper layers of application.
 
@@ -30,70 +30,70 @@ Voting is done by calling a `Vote` method with a `Ballot` containing preferences
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
-	"os"
+ "context"
+ "fmt"
+ "log"
+ "os"
 
-	"resenje.org/markus"
+ "resenje.org/markus"
 )
 
 func main() {
-	dir, err := os.MkdirTemp("", "")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+ dir, err := os.MkdirTemp("", "")
+ if err != nil {
+  log.Fatal(err)
+ }
+ defer os.RemoveAll(dir)
 
-	// Create a new voting.
-	v, err := markus.NewVoting[uint64](dir)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer v.Close()
+ // Create a new voting.
+ v, err := markus.NewVoting(dir)
+ if err != nil {
+  log.Fatal(err)
+ }
+ defer v.Close()
 
-	// Add choices.
-	if _, _, err := v.AddChoices(3); err != nil {
-		log.Fatal(err)
-	}
+ // Add choices.
+ if _, _, err := v.AddChoices(3); err != nil {
+  log.Fatal(err)
+ }
 
-	// First vote.
-	record1, err := v.Vote(markus.Ballot[uint64]{
-		0: 1,
-		2: 2,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+ // First vote.
+ record1, err := v.Vote(markus.Ballot{
+  0: 1,
+  2: 2,
+ })
+ if err != nil {
+  log.Fatal(err)
+ }
 
-	// Second vote.
-	if _, err := v.Vote(markus.Ballot[uint64]{
-		1: 1,
-		2: 2,
-	}); err != nil {
-		log.Fatal(err)
-	}
+ // Second vote.
+ if _, err := v.Vote(markus.Ballot{
+  1: 1,
+  2: 2,
+ }); err != nil {
+  log.Fatal(err)
+ }
 
-	// A vote can be changed.
-	if err := v.Unvote(record1); err != nil {
-		log.Fatal(err)
-	}
-	if _, err := v.Vote(markus.Ballot[uint64]{
-		0: 1,
-		1: 2,
-	}); err != nil {
-		log.Fatal(err)
-	}
+ // A vote can be changed.
+ if err := v.Unvote(record1); err != nil {
+  log.Fatal(err)
+ }
+ if _, err := v.Vote(markus.Ballot{
+  0: 1,
+  1: 2,
+ }); err != nil {
+  log.Fatal(err)
+ }
 
-	// Calculate the result.
-	result, _, tie, err := v.ComputeSorted(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-	if tie {
-		log.Fatal("tie")
-	}
-	fmt.Println("winner:", result[0].Index)
+ // Calculate the result.
+ result, _, tie, err := v.ComputeSorted(context.Background())
+ if err != nil {
+  log.Fatal(err)
+ }
+ if tie {
+  log.Fatal("tie")
+ }
+ fmt.Println("winner:", result[0].Index)
 }
 ```
 
