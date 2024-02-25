@@ -141,3 +141,14 @@ func (m *Map) Write() error {
 		Cursor:  m.cursor,
 	})
 }
+
+func (m *Map) File() (*os.File, error) {
+	f, err := os.OpenFile(m.path, os.O_RDONLY, 0666)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return f, nil
+}

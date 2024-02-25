@@ -8,6 +8,7 @@ package markus
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ type Voting struct {
 	path            string
 	preferences     *matrix.Matrix
 	strengths       *matrix.Matrix
-	choicesIndex    *indexmap.Map
+	choices         *indexmap.Map
 	preferencesSize uint64
 	closed          bool
 
@@ -55,7 +56,7 @@ func NewVoting(path string) (*Voting, error) {
 		path:            path,
 		preferences:     preferences,
 		preferencesSize: preferences.Size(),
-		choicesIndex:    im,
+		choices:         im,
 	}, nil
 }
 
@@ -68,7 +69,7 @@ func (v *Voting) AddChoices(count uint64) (from, to uint64, err error) {
 	preferencesResize := int64(0)
 	from = math.MaxUint64
 	for i := uint64(0); i < count; i++ {
-		physical, virtual := v.choicesIndex.Add()
+		physical, virtual := v.choices.Add()
 		if physical >= v.preferencesSize {
 			preferencesResize++
 		}
@@ -88,12 +89,12 @@ func (v *Voting) AddChoices(count uint64) (from, to uint64, err error) {
 	// preferences' diagonal values, just as nobody voted for the
 	// new choice to ensure consistency
 	for j := from; j <= to; j++ {
-		j, has := v.choicesIndex.GetPhysical(j)
+		j, has := v.choices.GetPhysical(j)
 		if !has {
 			continue
 		}
 		for i := uint64(0); i <= to; i++ {
-			i, has := v.choicesIndex.GetPhysical(i)
+			i, has := v.choices.GetPhysical(i)
 			if !has {
 				continue
 			}
@@ -102,7 +103,7 @@ func (v *Voting) AddChoices(count uint64) (from, to uint64, err error) {
 		}
 	}
 
-	if err := v.choicesIndex.Write(); err != nil {
+	if err := v.choices.Write(); err != nil {
 		return 0, 0, fmt.Errorf("write choices index: %w", err)
 	}
 
@@ -121,18 +122,18 @@ func (v *Voting) RemoveChoices(indexes ...uint64) error {
 	defer v.mu.Unlock()
 
 	for _, i := range indexes {
-		physical, has := v.choicesIndex.GetPhysical(i)
+		physical, has := v.choices.GetPhysical(i)
 		if !has {
 			continue
 		}
-		v.choicesIndex.Remove(i)
+		v.choices.Remove(i)
 		for j := uint64(0); j < v.preferencesSize; j++ {
 			v.preferences.Set(physical, j, 0)
 			v.preferences.Set(j, physical, 0)
 		}
 	}
 
-	if err := v.choicesIndex.Write(); err != nil {
+	if err := v.choices.Write(); err != nil {
 		return fmt.Errorf("write choices index: %w", err)
 	}
 
@@ -156,7 +157,7 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
-	choicesCursor := v.choicesIndex.Cursor()
+	choicesCursor := v.choices.Cursor()
 
 	ballotLen := uint64(len(b))
 
@@ -166,7 +167,7 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 		if index >= choicesCursor {
 			return Record{}, &UnknownChoiceError{Index: index}
 		}
-		if _, has := v.choicesIndex.GetPhysical(index); !has {
+		if _, has := v.choices.GetPhysical(index); !has {
 			return Record{}, &UnknownChoiceError{Index: index}
 		}
 
@@ -192,7 +193,7 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 	// all choices are ranked, tread diagonal values as a single not ranked
 	// choice, deprioritizing them for all existing choices
 	for i := range b {
-		i, has := v.choicesIndex.GetPhysical(i)
+		i, has := v.choices.GetPhysical(i)
 		if !has {
 			continue
 		}
@@ -213,13 +214,13 @@ func (v *Voting) Vote(b Ballot) (Record, error) {
 	for rank, choices1 := range ranks {
 		rest := ranks[rank+1:]
 		for _, index1 := range choices1 {
-			index1, has := v.choicesIndex.GetPhysical(index1)
+			index1, has := v.choices.GetPhysical(index1)
 			if !has {
 				continue
 			}
 			for _, choices2 := range rest {
 				for _, index2 := range choices2 {
-					index2, has := v.choicesIndex.GetPhysical(index2)
+					index2, has := v.choices.GetPhysical(index2)
 					if !has {
 						continue
 					}
@@ -257,13 +258,13 @@ func (v *Voting) Unvote(r Record) error {
 			if index1 > max {
 				max = index1
 			}
-			index1, has := v.choicesIndex.GetPhysical(index1)
+			index1, has := v.choices.GetPhysical(index1)
 			if !has {
 				continue
 			}
 			for _, choices2 := range rest {
 				for _, index2 := range choices2 {
-					index2, has := v.choicesIndex.GetPhysical(index2)
+					index2, has := v.choices.GetPhysical(index2)
 					if !has {
 						continue
 					}
@@ -278,7 +279,7 @@ func (v *Voting) Unvote(r Record) error {
 	// remove voting from the ranked choices of the Record
 	for _, choices := range r[:recordLength-1] {
 		for _, index := range choices {
-			index, has := v.choicesIndex.GetPhysical(index)
+			index, has := v.choices.GetPhysical(index)
 			if !has {
 				continue
 			}
@@ -291,7 +292,7 @@ func (v *Voting) Unvote(r Record) error {
 	for i := uint64(0); i < v.preferencesSize; i++ {
 		if _, ok := rankedChoices[i]; ok {
 			for j := uint64(0); j < v.preferencesSize; j++ {
-				virtual, has := v.choicesIndex.GetVirtual(j)
+				virtual, has := v.choices.GetVirtual(j)
 				if !has {
 					continue
 				}
@@ -358,7 +359,7 @@ func (v *Voting) Size() uint64 {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	return v.preferencesSize - uint64(v.choicesIndex.FreeCount())
+	return v.preferencesSize - uint64(v.choices.FreeCount())
 }
 
 // Compute calculates the results of the voting. The function passed as the
@@ -453,7 +454,7 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 		}
 
 		for i := uint64(0); i < preferencesSize; i++ {
-			_, has := v.choicesIndex.GetPhysical(i)
+			_, has := v.choices.GetPhysical(i)
 			if !has {
 				continue
 			}
@@ -506,7 +507,7 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 		}
 	}
 
-	choicesCursor := v.choicesIndex.Cursor()
+	choicesCursor := v.choices.Cursor()
 	for i := uint64(0); i < choicesCursor; i++ {
 		select {
 		case <-ctx.Done():
@@ -514,7 +515,7 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 		default:
 		}
 
-		i, has := v.choicesIndex.GetPhysical(i)
+		i, has := v.choices.GetPhysical(i)
 		if !has {
 			continue
 		}
@@ -524,7 +525,7 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 		var advantage uint64
 
 		for j := uint64(0); j < choicesCursor; j++ {
-			j, has := v.choicesIndex.GetPhysical(j)
+			j, has := v.choices.GetPhysical(j)
 			if !has {
 				continue
 			}
@@ -571,6 +572,39 @@ func (v *Voting) Close() error {
 		}
 	}
 
+	return nil
+}
+
+// Files provides access to the preferences matrix and choices index files,
+// mainly for the backup purposes. The fn function will be called over all files
+// that are required for voting to be recreated. The provided body and stats are
+// no longer reliable when the Data method exits.
+func (v *Voting) Files(fn func(body io.Reader, stats os.FileInfo) error) error {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+
+	preferencesFile, preferencesStats, err := v.preferences.File()
+	if err != nil {
+		return err
+	}
+	if err := fn(preferencesFile, preferencesStats); err != nil {
+		return err
+	}
+
+	choicesFile, err := v.choices.File()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	choicesStats, err := choicesFile.Stat()
+	if err != nil {
+		return err
+	}
+	if err := fn(choicesFile, choicesStats); err != nil {
+		return err
+	}
 	return nil
 }
 

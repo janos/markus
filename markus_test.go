@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
@@ -535,6 +536,64 @@ func TestVoting_persistance(t *testing.T) {
 	assertEqual(t, "results", results, wantResults)
 	assertEqual(t, "tie", tie, wantTie)
 	assertEqual(t, "staled", staled, wantStaled)
+
+	{ // test persistence of the backup files
+		backupDir := t.TempDir()
+
+		if err := v2.Files(func(body io.Reader, stats os.FileInfo) error {
+			f, err := os.Create(filepath.Join(backupDir, stats.Name()))
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(f, body)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		v3, err := markus.NewVoting(backupDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer v3.Close()
+
+		results, tie, staled, err = v3.ComputeSorted(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEqual(t, "results", results, wantResults)
+		assertEqual(t, "tie", tie, wantTie)
+		assertEqual(t, "staled", staled, wantStaled)
+	}
+
+	{ // test persistence of the backup files, again, to ensure consistency
+		backupDir := t.TempDir()
+
+		if err := v2.Files(func(body io.Reader, stats os.FileInfo) error {
+			f, err := os.Create(filepath.Join(backupDir, stats.Name()))
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(f, body)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		v3, err := markus.NewVoting(backupDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer v3.Close()
+
+		results, tie, staled, err = v3.ComputeSorted(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertEqual(t, "results", results, wantResults)
+		assertEqual(t, "tie", tie, wantTie)
+		assertEqual(t, "staled", staled, wantStaled)
+	}
 }
 
 func TestVoting_addVoteAndUnvote(t *testing.T) {

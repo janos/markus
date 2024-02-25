@@ -37,7 +37,7 @@ func (v *Voting) PreferencesMatrixLabels() []string {
 	choices := make([]string, 0)
 
 	for i := uint64(0); i < v.preferences.Size(); i++ {
-		virtual, has := v.choicesIndex.GetVirtual(i)
+		virtual, has := v.choices.GetVirtual(i)
 		vs := fmt.Sprint(virtual)
 		if !has {
 			vs = "/"
@@ -55,7 +55,7 @@ func (v *Voting) Choices() []uint64 {
 	choices := make([]uint64, 0)
 
 	for i := uint64(0); i < v.preferences.Size(); i++ {
-		i, has := v.choicesIndex.GetVirtual(i)
+		i, has := v.choices.GetVirtual(i)
 		if !has {
 			continue
 		}

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"unsafe"
 )
@@ -158,6 +159,18 @@ func (m *Matrix) Size() uint64 {
 		return 0
 	}
 	return floorSqrt((length - versionSize) / elementSize)
+}
+
+func (m *Matrix) File() (io.Reader, os.FileInfo, error) {
+	stat, err := m.file.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := m.file.Seek(0, io.SeekStart); err != nil {
+		return nil, nil, err
+	}
+	// prevent closing the file
+	return io.NopCloser(m.file), stat, nil
 }
 
 func (m *Matrix) Close() error {
