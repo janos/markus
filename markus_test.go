@@ -474,6 +474,56 @@ func TestVoting_Unvote_afterRemoveChoices(t *testing.T) {
 	})
 }
 
+func TestCompute_indexesAfterRemoval(t *testing.T) {
+	v := newMarkusVoting(t)
+
+	if _, _, err := v.AddChoices(10); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := v.RemoveChoices(2, 5, 6, 9); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := v.AddChoices(6); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []markus.Result{
+		{Index: 0},
+		{Index: 1},
+		{Index: 3},
+		{Index: 4},
+		{Index: 7},
+		{Index: 8},
+		{Index: 10},
+		{Index: 11},
+		{Index: 12},
+		{Index: 13},
+		{Index: 14},
+		{Index: 15},
+	}
+	got := make([]markus.Result, 0)
+
+	stale, err := v.Compute(context.Background(), func(r markus.Result) (bool, error) {
+		got = append(got, r)
+		return true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "stale", stale, false)
+	assertEqual(t, "results", got, want)
+
+	got, tie, stale, err := v.ComputeSorted(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "stale", stale, false)
+	assertEqual(t, "tie", tie, true)
+	assertEqual(t, "results", got, want)
+}
+
 func TestVoting_persistance(t *testing.T) {
 	dir := t.TempDir()
 	v, err := markus.NewVoting(dir)

@@ -515,6 +515,7 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 		default:
 		}
 
+		virtualIndex := i
 		i, has := v.choices.GetPhysical(i)
 		if !has {
 			continue
@@ -540,7 +541,7 @@ func (v *Voting) compute(ctx context.Context, f func(Result) (bool, error)) (sta
 				}
 			}
 		}
-		cont, err := f(Result{Index: i, Wins: wins, Strength: strength, Advantage: advantage})
+		cont, err := f(Result{Index: virtualIndex, Wins: wins, Strength: strength, Advantage: advantage})
 		if err != nil {
 			return false, fmt.Errorf("calculate results: %w", err)
 		}
